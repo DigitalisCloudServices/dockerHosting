@@ -154,18 +154,69 @@ EOF
 
 echo "[INFO] Created AIDE configuration: /etc/aide/aide.conf"
 
-# Initialize AIDE database
-echo "[INFO] Initializing AIDE database (this may take a few minutes)..."
-aideinit
+# Create background initialization script
+cat > /tmp/aide-init-background.sh <<'INITEOF'
+#!/bin/bash
+# Background AIDE database initialization
+# This script runs in the background to avoid blocking setup
 
-# Move new database to active database
-if [ -f /var/lib/aide/aide.db.new ]; then
-    cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db
-    echo "[INFO] AIDE database initialized successfully"
+LOGFILE="/var/log/aide/aide-init.log"
+STATUSFILE="/var/log/aide/aide-init.status"
+
+mkdir -p /var/log/aide
+chmod 700 /var/log/aide
+
+echo "starting" > "$STATUSFILE"
+echo "$(date): Starting AIDE database initialization..." >> "$LOGFILE"
+
+# Run aideinit
+if aideinit >> "$LOGFILE" 2>&1; then
+    # Move new database to active database
+    if [ -f /var/lib/aide/aide.db.new ]; then
+        cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+        echo "complete" > "$STATUSFILE"
+        echo "$(date): AIDE database initialized successfully" >> "$LOGFILE"
+
+        # Send email notification if msmtp is configured
+        if command -v mail &> /dev/null && [ -f /etc/msmtprc ]; then
+            echo "AIDE file integrity monitoring database has been initialized successfully on $(hostname)." | \
+                mail -s "AIDE Initialization Complete - $(hostname)" root 2>/dev/null || true
+        fi
+    else
+        echo "failed" > "$STATUSFILE"
+        echo "$(date): ERROR - Database file not created" >> "$LOGFILE"
+
+        # Send failure email notification if msmtp is configured
+        if command -v mail &> /dev/null && [ -f /etc/msmtprc ]; then
+            echo "AIDE database initialization failed on $(hostname). Check /var/log/aide/aide-init.log for details." | \
+                mail -s "AIDE Initialization Failed - $(hostname)" root 2>/dev/null || true
+        fi
+    fi
 else
-    echo "[ERROR] AIDE database initialization failed!"
-    exit 1
+    echo "failed" > "$STATUSFILE"
+    echo "$(date): ERROR - aideinit command failed" >> "$LOGFILE"
+
+    # Send failure email notification if msmtp is configured
+    if command -v mail &> /dev/null && [ -f /etc/msmtprc ]; then
+        echo "AIDE initialization command failed on $(hostname). Check /var/log/aide/aide-init.log for details." | \
+            mail -s "AIDE Initialization Failed - $(hostname)" root 2>/dev/null || true
+    fi
 fi
+
+# Cleanup
+rm -f /tmp/aide-init-background.sh
+INITEOF
+
+chmod +x /tmp/aide-init-background.sh
+
+# Start initialization in background
+echo "[INFO] Starting AIDE database initialization in background..."
+echo "[INFO] This process will continue after setup completes (typically 5-10 minutes)"
+nohup /tmp/aide-init-background.sh >/dev/null 2>&1 &
+
+echo "[INFO] AIDE initialization started (PID: $!)"
+echo "[INFO] Check status: aide-init-status"
+echo "[INFO] View progress: tail -f /var/log/aide/aide-init.log"
 
 # Create daily AIDE check cron job
 cat > /etc/cron.daily/aide-check <<'EOF'
@@ -218,12 +269,80 @@ EOF
 chmod 755 /usr/local/bin/aide-update
 echo "[INFO] Created helper script: /usr/local/bin/aide-update"
 
+# Create helper script to check initialization status
+cat > /usr/local/bin/aide-init-status <<'EOF'
+#!/bin/bash
+# Check AIDE database initialization status
+
+STATUSFILE="/var/log/aide/aide-init.status"
+LOGFILE="/var/log/aide/aide-init.log"
+
+if [ ! -f "$STATUSFILE" ]; then
+    echo "AIDE initialization status: UNKNOWN (status file not found)"
+    echo "This could mean AIDE was initialized before this check script was created."
+
+    # Check if database exists
+    if [ -f /var/lib/aide/aide.db ]; then
+        echo "AIDE database exists: /var/lib/aide/aide.db"
+        echo "Status: COMPLETE"
+        exit 0
+    else
+        echo "AIDE database NOT found: /var/lib/aide/aide.db"
+        echo "Status: NOT INITIALIZED"
+        exit 1
+    fi
+fi
+
+STATUS=$(cat "$STATUSFILE")
+
+case "$STATUS" in
+    starting)
+        echo "AIDE initialization status: IN PROGRESS"
+        echo ""
+        echo "The AIDE database is still being built. This can take 5-10 minutes."
+        echo "To monitor progress:"
+        echo "  tail -f $LOGFILE"
+        exit 2
+        ;;
+    complete)
+        echo "AIDE initialization status: COMPLETE"
+        echo ""
+        echo "Database location: /var/lib/aide/aide.db"
+        echo "Daily checks scheduled: /etc/cron.daily/aide-check"
+        echo ""
+        echo "Run manual check: aide-check"
+        exit 0
+        ;;
+    failed)
+        echo "AIDE initialization status: FAILED"
+        echo ""
+        echo "Check the log file for details:"
+        echo "  cat $LOGFILE"
+        echo ""
+        echo "To retry initialization:"
+        echo "  sudo aideinit"
+        echo "  sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db"
+        exit 1
+        ;;
+    *)
+        echo "AIDE initialization status: UNKNOWN ($STATUS)"
+        exit 3
+        ;;
+esac
+EOF
+
+chmod 755 /usr/local/bin/aide-init-status
+echo "[INFO] Created helper script: /usr/local/bin/aide-init-status"
+
 echo ""
 echo "[INFO] ════════════════════════════════════════════"
 echo "[INFO] AIDE File Integrity Monitoring Setup Complete!"
 echo "[INFO] ════════════════════════════════════════════"
 echo ""
-echo "[INFO] AIDE is now monitoring:"
+echo "[WARN] Database initialization is running in the background"
+echo "[WARN] This process typically takes 5-10 minutes to complete"
+echo ""
+echo "[INFO] AIDE will monitor:"
 echo "  ✓ System binaries (/bin, /sbin, /usr/bin, /usr/sbin)"
 echo "  ✓ System libraries (/lib, /usr/lib)"
 echo "  ✓ Boot files (/boot)"
@@ -240,12 +359,20 @@ echo "[INFO] Scheduled checks:"
 echo "  - Daily automatic check: /etc/cron.daily/aide-check"
 echo "  - Logs: /var/log/aide/aide-check-YYYYMMDD.log"
 echo ""
+echo "[INFO] Initialization monitoring:"
+echo "  - Check status: aide-init-status"
+echo "  - View progress: tail -f /var/log/aide/aide-init.log"
+echo "  - Initialization log: /var/log/aide/aide-init.log"
+echo ""
 echo "[INFO] Manual commands:"
-echo "  - Run check: aide-check (or aide --check)"
+echo "  - Check initialization: aide-init-status"
+echo "  - Run integrity check: aide-check (or aide --check)"
 echo "  - Update database: aide-update (after authorized changes)"
 echo "  - Compare: aide --compare"
 echo ""
 echo "[WARN] IMPORTANT: After making authorized system changes:"
 echo "  1. Run: aide-update"
 echo "  2. This prevents false positives on next check"
+echo ""
+echo "[INFO] Email notifications will be sent when initialization completes"
 echo ""

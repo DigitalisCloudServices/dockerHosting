@@ -15,10 +15,7 @@ This repository provides scripts to:
 Run this on a fresh Debian Trixie installation to install Docker, Docker Compose, and essential packages:
 
 ```bash
-sudo apt-get update && sudo apt-get install curl -y
-curl -fsSL https://raw.githubusercontent.com/DigitalisCloudServices/dockerHosting/main/setup.sh -o setup.sh
-chmod +x setup.sh
-sudo ./setup.sh
+curl -fsSL https://raw.githubusercontent.com/DigitalisCloudServices/dockerHosting/main/setup.sh -o setup.sh && chmod +x ./setup.sh && sudo ./setup.sh
 ```
 
 Or if you have the repository cloned:
@@ -177,7 +174,7 @@ sudo ./scripts/setup-users.sh myapp /opt/myapp
 - fail2ban protection for brute-force prevention
 - Audit logging (auditd) for security events
 - Automated security updates (unattended-upgrades)
-- File integrity monitoring (AIDE)
+- File integrity monitoring (AIDE with background initialization)
 - Docker daemon hardening
 - User isolation per site
 - Proper file permissions
@@ -283,6 +280,38 @@ Common issues:
 - **TLS errors**: Check if port 587 (TLS) or 465 (SSL) is correct for your provider
 - **Authentication failed**: Verify username/password are correct
 - **Blocked port**: Some ISPs block outbound port 25, use 587 instead
+
+### AIDE File Integrity Monitoring
+
+Check AIDE initialization status:
+
+```bash
+aide-init-status
+```
+
+During setup, AIDE database initialization runs in the background and typically takes 5-10 minutes. Check the progress:
+
+```bash
+tail -f /var/log/aide/aide-init.log
+```
+
+Run manual file integrity check (only after initialization completes):
+
+```bash
+aide-check
+```
+
+Update AIDE database after making authorized changes:
+
+```bash
+sudo aide-update
+```
+
+Common issues:
+- **Initialization still running**: Wait for initialization to complete (check with `aide-init-status`)
+- **Database not found**: Initialization may have failed, check `/var/log/aide/aide-init.log`
+- **False positives**: After making authorized changes, run `sudo aide-update` to update the baseline
+- **Check failures**: AIDE detects changes - review the report carefully to determine if changes are authorized
 
 ## Contributing
 
