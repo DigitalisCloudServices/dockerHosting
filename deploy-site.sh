@@ -450,12 +450,55 @@ main() {
     log_info "Starting deployment..."
     echo ""
 
-    clone_repository "$GIT_URL" "$DEPLOY_DIR" "$GIT_BRANCH"
-    setup_user_permissions "$SITE_NAME" "$DEPLOY_DIR" "$CREATE_USER"
+    # Create user FIRST if needed (before cloning)
+    if [ "$CREATE_USER" = "yes" ]; then
+        log_step "Setting up user..."
 
-    # Setup Git SSH keys after user creation so the user can pull updates
+        if [ -f "$SCRIPT_DIR/scripts/setup-users.sh" ]; then
+            bash "$SCRIPT_DIR/scripts/setup-users.sh" "$SITE_NAME" "$DEPLOY_DIR"
+        else
+            log_warn "setup-users.sh not found, creating user manually..."
+
+            # Check if user exists
+            if id "$SITE_NAME" &>/dev/null; then
+                log_info "User $SITE_NAME already exists"
+            else
+                useradd -r -m -d "/home/$SITE_NAME" -s /bin/bash "$SITE_NAME"
+                log_info "Created user: $SITE_NAME"
+            fi
+
+            # Add user to docker group
+            usermod -aG docker "$SITE_NAME"
+        fi
+
+        # Setup Git SSH keys BEFORE cloning if provided
+        if [ -n "$GIT_SSH_KEY" ]; then
+            setup_git_ssh_key "$SITE_NAME" "$GIT_SSH_KEY" "$GIT_URL"
+        fi
+    fi
+
+    # Clone repository (as user if SSH key provided, otherwise as root)
     if [ "$CREATE_USER" = "yes" ] && [ -n "$GIT_SSH_KEY" ]; then
-        setup_git_ssh_key "$SITE_NAME" "$GIT_SSH_KEY" "$GIT_URL"
+        log_step "Cloning repository as user $SITE_NAME..."
+
+        # Clone as the site user
+        if [ -n "$GIT_BRANCH" ]; then
+            log_info "Cloning branch: $GIT_BRANCH"
+            sudo -u "$SITE_NAME" git clone -b "$GIT_BRANCH" "$GIT_URL" "$DEPLOY_DIR"
+        else
+            sudo -u "$SITE_NAME" git clone "$GIT_URL" "$DEPLOY_DIR"
+        fi
+
+        log_info "Repository cloned successfully to $DEPLOY_DIR"
+    else
+        # Clone as root (original behavior for HTTPS or when no SSH key)
+        clone_repository "$GIT_URL" "$DEPLOY_DIR" "$GIT_BRANCH"
+    fi
+
+    # Set ownership if user was created
+    if [ "$CREATE_USER" = "yes" ]; then
+        log_info "Setting ownership of $DEPLOY_DIR to $SITE_NAME"
+        chown -R "$SITE_NAME:$SITE_NAME" "$DEPLOY_DIR"
     fi
 
     setup_environment "$DEPLOY_DIR" "$ENCRYPTION_KEY" "$ADDITIONAL_VARS"
