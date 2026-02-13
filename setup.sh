@@ -3,12 +3,10 @@
 #############################################
 # dockerHosting - Server Setup Script
 #
-# Purpose: Initial setup for Debian Trixie server
-# - Installs Docker and Docker Compose
-# - Installs essential packages
-# - Configures firewall
-# - Sets up log rotation
-# - Prepares server for hosting Docker-based sites
+# Purpose: Bootstrap a fresh Debian Trixie server
+# - Installs basic system packages
+# - Clones dockerHosting repository
+# - Runs full setup from repository scripts
 #############################################
 
 set -e  # Exit on error
@@ -19,8 +17,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Get the directory where the script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Configuration
+DOCKERHOSTING_REPO="https://github.com/DigitalisCloudServices/dockerHosting.git"
+DOCKERHOSTING_DIR="/opt/dockerHosting"
 
 # Log functions
 log_info() {
@@ -76,6 +75,78 @@ check_os() {
     log_info "OS: $PRETTY_NAME"
 }
 
+# Install basic packages needed to clone repo
+install_basic_packages() {
+    log_info "Installing basic system packages..."
+
+    apt-get update
+    apt-get upgrade -y
+    apt-get install -y curl git wget ca-certificates gnupg lsb-release apt-transport-https
+
+    log_info "Basic packages installed"
+}
+
+# Clone dockerHosting repository
+clone_repository() {
+    log_info "Cloning dockerHosting repository..."
+
+    if [ -d "$DOCKERHOSTING_DIR" ]; then
+        log_warn "Directory $DOCKERHOSTING_DIR already exists"
+        read -p "Remove and re-clone? (y/N) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm -rf "$DOCKERHOSTING_DIR"
+        else
+            log_info "Using existing directory"
+            return 0
+        fi
+    fi
+
+    if git clone "$DOCKERHOSTING_REPO" "$DOCKERHOSTING_DIR"; then
+        log_info "Repository cloned successfully to $DOCKERHOSTING_DIR"
+    else
+        log_error "Failed to clone repository"
+        exit 1
+    fi
+}
+
+# Run full setup from repository
+run_full_setup() {
+    log_info "Running full setup from repository scripts..."
+    echo ""
+
+    cd "$DOCKERHOSTING_DIR"
+
+    # Install packages from repository config
+    if [ -f "$DOCKERHOSTING_DIR/scripts/install-packages.sh" ]; then
+        log_info "Installing additional packages..."
+        bash "$DOCKERHOSTING_DIR/scripts/install-packages.sh"
+    fi
+
+    # Install Docker
+    if [ -f "$DOCKERHOSTING_DIR/scripts/install-docker.sh" ]; then
+        log_info "Installing Docker..."
+        bash "$DOCKERHOSTING_DIR/scripts/install-docker.sh"
+    fi
+
+    # Configure firewall
+    if [ -f "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" ]; then
+        log_info "Configuring firewall..."
+        bash "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh"
+    fi
+
+    # Setup log rotation
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-logrotate.sh" ]; then
+        log_info "Configuring log rotation..."
+        bash "$DOCKERHOSTING_DIR/scripts/setup-logrotate.sh" "docker-system" "/var/lib/docker/containers"
+    fi
+
+    # Create standard directories
+    log_info "Creating standard directories..."
+    mkdir -p /opt
+    mkdir -p /var/log/docker-sites
+}
+
 # Main setup function
 main() {
     display_banner
@@ -83,50 +154,18 @@ main() {
     check_os
 
     log_info "Starting server setup..."
+    echo ""
 
-    # Update system
-    log_info "Updating system packages..."
-    apt-get update
-    apt-get upgrade -y
+    # Step 1: Install basic packages
+    install_basic_packages
+    echo ""
 
-    # Install packages
-    log_info "Installing essential packages..."
-    if [ -f "$SCRIPT_DIR/scripts/install-packages.sh" ]; then
-        bash "$SCRIPT_DIR/scripts/install-packages.sh"
-    else
-        log_warn "install-packages.sh not found, installing basic packages..."
-        apt-get install -y curl git wget ca-certificates gnupg lsb-release \
-            software-properties-common apt-transport-https make vim \
-            htop net-tools ufw logrotate
-    fi
+    # Step 2: Clone repository
+    clone_repository
+    echo ""
 
-    # Install Docker
-    log_info "Installing Docker..."
-    if [ -f "$SCRIPT_DIR/scripts/install-docker.sh" ]; then
-        bash "$SCRIPT_DIR/scripts/install-docker.sh"
-    else
-        log_error "install-docker.sh not found in scripts directory"
-        exit 1
-    fi
-
-    # Configure firewall
-    log_info "Configuring firewall..."
-    if [ -f "$SCRIPT_DIR/scripts/configure-firewall.sh" ]; then
-        bash "$SCRIPT_DIR/scripts/configure-firewall.sh"
-    else
-        log_warn "configure-firewall.sh not found, skipping firewall setup"
-    fi
-
-    # Setup base log rotation
-    log_info "Configuring log rotation..."
-    if [ -f "$SCRIPT_DIR/scripts/setup-logrotate.sh" ]; then
-        bash "$SCRIPT_DIR/scripts/setup-logrotate.sh" "docker-system" "/var/lib/docker/containers"
-    fi
-
-    # Create standard directories
-    log_info "Creating standard directories..."
-    mkdir -p /opt
-    mkdir -p /var/log/docker-sites
+    # Step 3: Run full setup from repository
+    run_full_setup
 
     # Final messages
     echo ""
@@ -138,13 +177,14 @@ main() {
     echo ""
     log_info "Next steps:"
     echo "  1. Log out and log back in"
-    echo "  2. Run './deploy-site.sh' to deploy a new site"
+    echo "  2. Deploy a site using dockerHosting:"
+    echo "     cd $DOCKERHOSTING_DIR && sudo ./deploy-site.sh"
     echo "  3. Or manually clone your site repository to /opt/"
     echo ""
     log_info "Useful commands:"
     echo "  - Check Docker: docker --version"
     echo "  - Check firewall: sudo ufw status"
-    echo "  - Deploy site: ./deploy-site.sh"
+    echo "  - Deploy site: cd $DOCKERHOSTING_DIR && sudo ./deploy-site.sh"
     echo ""
 }
 

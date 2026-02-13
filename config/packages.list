@@ -8,7 +8,6 @@ git
 ca-certificates
 gnupg
 lsb-release
-software-properties-common
 apt-transport-https
 
 # Text editors

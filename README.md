@@ -15,7 +15,7 @@ This repository provides scripts to:
 Run this on a fresh Debian Trixie installation to install Docker, Docker Compose, and essential packages:
 
 ```bash
-apt-get update && apt-get install curl -y
+sudo apt-get update && sudo apt-get install curl -y
 curl -fsSL https://raw.githubusercontent.com/DigitalisCloudServices/dockerHosting/main/setup.sh -o setup.sh
 chmod +x setup.sh
 sudo ./setup.sh
@@ -89,7 +89,7 @@ dockerHosting/
 ```bash
 ./deploy-site.sh
 # Enter when prompted:
-# - Git repo: https://github.com/YOUR_ORG/KSE-Portal.git
+# - Git repo: https://github.com/DigitalisCloudServices/KSE-Portal.git
 # - Site name: kse-portal
 # - Directory: /opt/kse-portal
 # - User: kse-portal
