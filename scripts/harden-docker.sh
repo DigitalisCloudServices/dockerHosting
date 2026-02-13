@@ -15,6 +15,12 @@
 
 set -e
 
+# Auto-elevate to root if not already running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "This script requires root privileges. Re-running with sudo..."
+    exec sudo "$0" "$@"
+fi
+
 echo "[INFO] Hardening Docker daemon configuration..."
 echo ""
 echo "User namespace remapping provides strong container isolation but can cause"
@@ -62,9 +68,6 @@ if [ "$ENABLE_USERNS_REMAP" = true ]; then
   "userns-remap": "default",
   "default-shm-size": "64M",
   "storage-driver": "overlay2",
-  "storage-opts": [
-    "overlay2.override_kernel_check=true"
-  ],
   "exec-opts": ["native.cgroupdriver=systemd"],
   "features": {
     "buildkit": true
@@ -97,9 +100,6 @@ else
   "selinux-enabled": false,
   "default-shm-size": "64M",
   "storage-driver": "overlay2",
-  "storage-opts": [
-    "overlay2.override_kernel_check=true"
-  ],
   "exec-opts": ["native.cgroupdriver=systemd"],
   "features": {
     "buildkit": true
@@ -482,14 +482,35 @@ fi
 # Restart Docker to apply changes
 echo "[INFO] Restarting Docker daemon..."
 if ! systemctl restart docker; then
-    echo "[ERROR] Failed to restart Docker daemon!"
-    echo ""
-    echo "[ERROR] Recent Docker logs:"
-    journalctl -xeu docker.service -n 50 --no-pager
-    echo ""
-    echo "[ERROR] Daemon configuration may be invalid. Check /etc/docker/daemon.json"
-    echo "[ERROR] You can restore the backup from /etc/docker/daemon.json.backup.*"
-    exit 1
+    echo "[WARN] Hardened configuration failed, trying fallback..."
+
+    # Fallback: Create minimal working configuration
+    cat > /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  },
+  "live-restore": true,
+  "storage-driver": "overlay2",
+  "exec-opts": ["native.cgroupdriver=systemd"]
+}
+EOF
+
+    echo "[INFO] Trying minimal Docker configuration..."
+    if ! systemctl restart docker; then
+        echo "[ERROR] Even minimal configuration failed!"
+        echo ""
+        echo "[ERROR] Recent Docker logs:"
+        journalctl -xeu docker.service -n 50 --no-pager
+        echo ""
+        echo "[ERROR] You can restore the backup from /etc/docker/daemon.json.backup.*"
+        exit 1
+    fi
+
+    echo "[WARN] Running with minimal Docker configuration (hardening disabled)"
+    echo "[WARN] To retry hardening later, run: /opt/dockerHosting/scripts/harden-docker.sh"
 fi
 
 # Wait for Docker to start
@@ -511,29 +532,52 @@ fi
 # Verify configuration
 echo ""
 echo "[INFO] Verifying Docker configuration..."
-docker info | grep -E "Seccomp|User Namespace|Storage Driver|Logging Driver" || true
+docker info | grep -E "Storage Driver|Logging Driver" || true
+
+# Check if we're running hardened or minimal config
+if grep -q '"icc": false' /etc/docker/daemon.json 2>/dev/null; then
+    HARDENED=true
+else
+    HARDENED=false
+fi
 
 echo ""
 echo "[INFO] ════════════════════════════════════════════"
-echo "[INFO] Docker Daemon Hardening Complete!"
-echo "[INFO] ════════════════════════════════════════════"
-echo ""
-echo "[INFO] Security features enabled:"
-echo "  ✓ User namespace remapping (containers run as unprivileged users)"
-echo "  ✓ Inter-container communication DISABLED (--icc=false)"
-echo "  ✓ Seccomp filtering (restricted system calls)"
-echo "  ✓ No new privileges (prevents privilege escalation)"
-echo "  ✓ Resource limits (ulimits configured)"
-echo "  ✓ Logging limits (10MB max, 3 files)"
-echo "  ✓ Live restore enabled (containers survive daemon restarts)"
-echo "  ✓ Userland proxy disabled (better performance)"
-echo ""
-echo "[WARN] IMPORTANT: Containers now run in isolated networks"
-echo "[WARN] Each site will have its own Docker network"
-echo "[WARN] Cross-site communication ONLY via boundary Nginx"
-echo ""
-echo "[INFO] Configuration files:"
-echo "  Daemon config: /etc/docker/daemon.json"
-echo "  Seccomp profile: /etc/docker/seccomp-default.json"
-echo "  User namespace: dockremap (UID/GID 100000-165535)"
+if [ "$HARDENED" = true ]; then
+    echo "[INFO] Docker Daemon Hardening Complete!"
+    echo "[INFO] ════════════════════════════════════════════"
+    echo ""
+    echo "[INFO] Security features enabled:"
+    if [ "$ENABLE_USERNS_REMAP" = true ]; then
+        echo "  ✓ User namespace remapping (containers run as unprivileged users)"
+    fi
+    echo "  ✓ Inter-container communication DISABLED (--icc=false)"
+    echo "  ✓ Seccomp filtering (restricted system calls)"
+    echo "  ✓ Resource limits (ulimits configured)"
+    echo "  ✓ Logging limits (10MB max, 3 files)"
+    echo "  ✓ Live restore enabled (containers survive daemon restarts)"
+    echo "  ✓ Userland proxy disabled (better performance)"
+    echo ""
+    echo "[WARN] IMPORTANT: Containers now run in isolated networks"
+    echo "[WARN] Each site will have its own Docker network"
+    echo "[WARN] Cross-site communication ONLY via boundary Nginx"
+    echo ""
+    echo "[INFO] Configuration files:"
+    echo "  Daemon config: /etc/docker/daemon.json"
+    echo "  Seccomp profile: /etc/docker/seccomp-default.json"
+    if [ "$ENABLE_USERNS_REMAP" = true ]; then
+        echo "  User namespace: dockremap (UID/GID 100000-165535)"
+    fi
+else
+    echo "[WARN] Docker Running with Minimal Configuration"
+    echo "[INFO] ════════════════════════════════════════════"
+    echo ""
+    echo "[WARN] Hardened configuration failed, using fallback"
+    echo "[INFO] Basic features enabled:"
+    echo "  ✓ Logging limits (10MB max, 3 files)"
+    echo "  ✓ Live restore enabled (containers survive daemon restarts)"
+    echo ""
+    echo "[INFO] To retry hardening later:"
+    echo "  /opt/dockerHosting/scripts/harden-docker.sh"
+fi
 echo ""

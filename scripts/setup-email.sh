@@ -9,6 +9,12 @@
 
 set -e
 
+# Auto-elevate to root if not already running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "This script requires root privileges. Re-running with sudo..."
+    exec sudo "$0" "$@"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

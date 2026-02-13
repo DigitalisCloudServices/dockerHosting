@@ -7,6 +7,12 @@
 
 set -e
 
+# Auto-elevate to root if not already running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "This script requires root privileges. Re-running with sudo..."
+    exec sudo "$0" "$@"
+fi
+
 echo "[INFO] Recovering Docker configuration..."
 
 # Find the most recent backup
