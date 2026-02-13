@@ -15,7 +15,8 @@ This repository provides scripts to:
 Run this on a fresh Debian Trixie installation to install Docker, Docker Compose, and essential packages:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/dockerHosting/main/setup.sh -o setup.sh
+apt-get update && apt-get install curl -y
+curl -fsSL https://raw.githubusercontent.com/DigitalisCloudServices/dockerHosting/main/setup.sh -o setup.sh
 chmod +x setup.sh
 sudo ./setup.sh
 ```

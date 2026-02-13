@@ -12,7 +12,6 @@ software-properties-common
 apt-transport-https
 
 # Text editors
-vim
 nano
 
 # System monitoring and administration
@@ -24,6 +23,7 @@ dnsutils
 traceroute
 tcpdump
 lsof
+unattended-upgrades
 
 # Build tools
 build-essential
@@ -45,27 +45,17 @@ zip
 bzip2
 tar
 tree
-ncdu
 
 # Shell utilities
-tmux
 screen
 
 # JSON/YAML tools
 jq
 yq
 
-# Network tools
-netcat-openbsd
-nmap
-iftop
-
 # Performance monitoring
 sysstat
 dstat
-
-# Process management
-supervisor
 
 # Backup tools
 duplicity
