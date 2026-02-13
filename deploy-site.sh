@@ -195,13 +195,15 @@ setup_git_ssh_key() {
 
     log_step "Setting up Git SSH authentication..."
 
-    # Determine home directory
+    # Get the user's actual home directory from the system
     local user_home
     if [ "$site_name" = "root" ]; then
         user_home="/root"
     else
-        user_home="/home/$site_name"
+        user_home=$(eval echo ~"$site_name")
     fi
+
+    log_info "Using home directory: $user_home"
 
     # Create .ssh directory
     mkdir -p "$user_home/.ssh"
@@ -584,31 +586,29 @@ main() {
     # Generate replay command (shown before deployment in case of failure)
     log_info "To replicate this deployment, use:"
     echo ""
-    REPLAY_CMD="sudo ./deploy-site.sh \\"
-    REPLAY_CMD="$REPLAY_CMD\n  --git-url \"$GIT_URL\" \\"
-    REPLAY_CMD="$REPLAY_CMD\n  --site-name \"$SITE_NAME\" \\"
-    REPLAY_CMD="$REPLAY_CMD\n  --deploy-dir \"$DEPLOY_DIR\" \\"
+    echo "sudo ./deploy-site.sh \\"
+    echo "  --git-url \"$GIT_URL\" \\"
+    echo "  --site-name \"$SITE_NAME\" \\"
+    echo "  --deploy-dir \"$DEPLOY_DIR\" \\"
     if [ -n "$GIT_BRANCH" ]; then
-        REPLAY_CMD="$REPLAY_CMD\n  --git-branch \"$GIT_BRANCH\" \\"
+        echo "  --git-branch \"$GIT_BRANCH\" \\"
     fi
-    REPLAY_CMD="$REPLAY_CMD\n  --create-user $CREATE_USER \\"
-    REPLAY_CMD="$REPLAY_CMD\n  --setup-logrotate $SETUP_LOGROTATE \\"
-    REPLAY_CMD="$REPLAY_CMD\n  --setup-systemd $SETUP_SYSTEMD"
+    echo "  --create-user $CREATE_USER \\"
+    echo "  --setup-logrotate $SETUP_LOGROTATE \\"
     if [ -n "$ENCRYPTION_KEY" ]; then
-        REPLAY_CMD="$REPLAY_CMD \\\n  --encryption-key \"[REDACTED]\""
+        echo "  --encryption-key \"[REDACTED]\" \\"
     fi
     if [ -n "$GIT_SSH_KEY" ]; then
         if [ -n "$SSH_KEY_FILE" ]; then
-            REPLAY_CMD="$REPLAY_CMD \\\n  --ssh-key-file \"$SSH_KEY_FILE\""
+            echo "  --ssh-key-file \"$SSH_KEY_FILE\" \\"
         else
-            REPLAY_CMD="$REPLAY_CMD \\\n  --ssh-key-file \"/path/to/ssh/key\""
+            echo "  --ssh-key-file \"/path/to/ssh/key\" \\"
         fi
     fi
     if [ -n "$ADDITIONAL_VARS" ]; then
-        REPLAY_CMD="$REPLAY_CMD \\\n  --additional-vars \"$ADDITIONAL_VARS\""
+        echo "  --additional-vars \"$ADDITIONAL_VARS\" \\"
     fi
-
-    echo -e "$REPLAY_CMD"
+    echo "  --setup-systemd $SETUP_SYSTEMD"
     echo ""
 
     # Confirm only in interactive mode
@@ -639,8 +639,8 @@ main() {
             if id "$SITE_NAME" &>/dev/null; then
                 log_info "User $SITE_NAME already exists"
             else
-                useradd -r -m -d "/home/$SITE_NAME" -s /bin/bash "$SITE_NAME"
-                log_info "Created user: $SITE_NAME"
+                useradd -r -m -d "$DEPLOY_DIR" -s /bin/bash "$SITE_NAME"
+                log_info "Created user: $SITE_NAME with home: $DEPLOY_DIR"
             fi
 
             # Add user to docker group

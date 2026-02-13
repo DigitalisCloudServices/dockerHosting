@@ -22,9 +22,9 @@ echo "[INFO] Setting up user and permissions for $SITE_NAME..."
 if id "$SITE_NAME" &>/dev/null; then
     echo "[INFO] User $SITE_NAME already exists"
 else
-    # Create system user with home directory
-    useradd -r -m -d "/home/$SITE_NAME" -s /bin/bash "$SITE_NAME"
-    echo "[INFO] Created system user: $SITE_NAME"
+    # Create system user with home directory set to deployment directory
+    useradd -r -m -d "$DEPLOY_DIR" -s /bin/bash "$SITE_NAME"
+    echo "[INFO] Created system user: $SITE_NAME with home: $DEPLOY_DIR"
 fi
 
 # NOTE: User is NOT added to docker group for security reasons
@@ -60,7 +60,7 @@ if [ -d "$DEPLOY_DIR" ]; then
 fi
 
 # Create SSH directory if needed (for git operations)
-SSH_DIR="/home/$SITE_NAME/.ssh"
+SSH_DIR="$DEPLOY_DIR/.ssh"
 if [ ! -d "$SSH_DIR" ]; then
     mkdir -p "$SSH_DIR"
     chown "$SITE_NAME:$SITE_NAME" "$SSH_DIR"
