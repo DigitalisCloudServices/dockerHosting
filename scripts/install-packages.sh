@@ -30,7 +30,6 @@ else
         curl \
         wget \
         git \
-        vim \
         nano \
         htop \
         net-tools \
@@ -38,7 +37,6 @@ else
         ca-certificates \
         gnupg \
         lsb-release \
-        software-properties-common \
         apt-transport-https \
         build-essential \
         make \
