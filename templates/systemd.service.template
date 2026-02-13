@@ -1,0 +1,40 @@
+[Unit]
+Description={{SITE_NAME}} Docker Service
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{DEPLOY_DIR}}
+User={{SITE_NAME}}
+Group={{SITE_NAME}}
+
+# Environment file
+EnvironmentFile={{DEPLOY_DIR}}/.env
+
+# Start command
+ExecStart=/usr/bin/docker compose up -d
+
+# Stop command
+ExecStop=/usr/bin/docker compose down
+
+# Reload command (graceful restart)
+ExecReload=/usr/bin/docker compose restart
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{SITE_NAME}}
+
+[Install]
+WantedBy=multi-user.target

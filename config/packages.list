@@ -1,0 +1,84 @@
+# Essential packages for Debian Trixie server
+# Lines starting with # are comments and will be ignored
+
+# Core utilities
+curl
+wget
+git
+ca-certificates
+gnupg
+lsb-release
+software-properties-common
+apt-transport-https
+
+# Text editors
+vim
+nano
+
+# System monitoring and administration
+htop
+iotop
+nethogs
+net-tools
+dnsutils
+traceroute
+tcpdump
+lsof
+
+# Build tools
+build-essential
+make
+gcc
+g++
+
+# Security
+ufw
+fail2ban
+
+# Log management
+logrotate
+
+# File management and utilities
+rsync
+unzip
+zip
+bzip2
+tar
+tree
+ncdu
+
+# Shell utilities
+tmux
+screen
+
+# JSON/YAML tools
+jq
+yq
+
+# Network tools
+netcat-openbsd
+nmap
+iftop
+
+# Performance monitoring
+sysstat
+dstat
+
+# Process management
+supervisor
+
+# Backup tools
+duplicity
+
+# Python (useful for many automation tasks)
+python3
+python3-pip
+python3-venv
+
+# Certbot (for Let's Encrypt SSL)
+certbot
+python3-certbot-nginx
+
+# Additional useful tools
+bc
+dos2unix
