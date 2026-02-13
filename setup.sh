@@ -92,13 +92,35 @@ clone_repository() {
 
     if [ -d "$DOCKERHOSTING_DIR" ]; then
         log_warn "Directory $DOCKERHOSTING_DIR already exists"
-        read -p "Remove and re-clone? (y/N) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -rf "$DOCKERHOSTING_DIR"
+
+        # Check if it's a git repository
+        if [ -d "$DOCKERHOSTING_DIR/.git" ]; then
+            read -p "Update existing repository? (Y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                log_info "Updating repository..."
+                cd "$DOCKERHOSTING_DIR"
+                if git pull; then
+                    log_info "Repository updated successfully"
+                    return 0
+                else
+                    log_error "Failed to update repository"
+                    exit 1
+                fi
+            else
+                log_info "Using existing directory without updating"
+                return 0
+            fi
         else
-            log_info "Using existing directory"
-            return 0
+            # Not a git repo, offer to remove and re-clone
+            read -p "Remove and re-clone? (y/N) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                rm -rf "$DOCKERHOSTING_DIR"
+            else
+                log_info "Using existing directory"
+                return 0
+            fi
         fi
     fi
 

@@ -32,6 +32,16 @@ mkdir -p /etc/nginx/sites-available
 mkdir -p /etc/nginx/sites-enabled
 mkdir -p /var/log/nginx
 
+# Remove default Nginx site configuration (conflicts with our default server)
+if [ -f /etc/nginx/sites-enabled/default ]; then
+    rm /etc/nginx/sites-enabled/default
+    echo "[INFO] Removed default Nginx site configuration"
+fi
+if [ -f /etc/nginx/sites-available/default ]; then
+    rm /etc/nginx/sites-available/default
+    echo "[INFO] Removed default Nginx site from sites-available"
+fi
+
 # Create optimized nginx.conf for boundary/routing
 cat > /etc/nginx/nginx.conf <<'EOF'
 user www-data;
