@@ -30,14 +30,19 @@ echo \
 # Update package index with Docker repo
 apt-get update
 
+# Remove old docker-compose package if it exists (conflicts with docker-compose-plugin)
+if dpkg -l | grep -q "^ii  docker-compose "; then
+    echo "[INFO] Removing old docker-compose package..."
+    apt-get remove -y docker-compose
+fi
+
 # Install Docker Engine, CLI, containerd, and plugins
 apt-get install -y \
     docker-ce \
     docker-ce-cli \
     containerd.io \
     docker-buildx-plugin \
-    docker-compose-plugin \
-    docker-compose
+    docker-compose-plugin
 
 # Allow docker in rootless mode to work on ports lower than 1024
 setcap 'cap_net_bind_service=+ep' /usr/bin/docker
