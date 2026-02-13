@@ -5,7 +5,7 @@
 #
 # Usage: ./setup-users.sh <site_name> <deploy_dir>
 #############################################
-Are 
+
 set -e
 
 SITE_NAME="$1"

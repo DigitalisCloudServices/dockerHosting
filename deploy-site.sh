@@ -626,9 +626,9 @@ main() {
     log_info "Starting deployment..."
     echo ""
 
-    # Create user FIRST if needed (before cloning)
+    # Create user and setup deployment directory structure
     if [ "$CREATE_USER" = "yes" ]; then
-        log_step "Setting up user..."
+        log_step "Setting up user and deployment directory..."
 
         if [ -f "$SCRIPT_DIR/scripts/setup-users.sh" ]; then
             bash "$SCRIPT_DIR/scripts/setup-users.sh" "$SITE_NAME" "$DEPLOY_DIR"
@@ -647,40 +647,52 @@ main() {
             usermod -aG docker "$SITE_NAME"
         fi
 
-        # Setup Git SSH keys BEFORE cloning if provided
+        # Setup Git SSH keys if provided
         if [ -n "$GIT_SSH_KEY" ]; then
             setup_git_ssh_key "$SITE_NAME" "$GIT_SSH_KEY" "$GIT_URL"
         fi
     fi
 
-    # Clone repository (as user if SSH key provided, otherwise as root)
+    # Git repository directory (subdirectory of deployment directory)
+    GIT_DIR="$DEPLOY_DIR/git"
+
+    # Clone repository into git subdirectory
     if [ "$CREATE_USER" = "yes" ] && [ -n "$GIT_SSH_KEY" ]; then
-        log_step "Cloning repository as user $SITE_NAME..."
+        log_step "Cloning repository as user $SITE_NAME into $GIT_DIR..."
 
         # Clone as the site user
         if [ -n "$GIT_BRANCH" ]; then
             log_info "Cloning branch: $GIT_BRANCH"
-            sudo -u "$SITE_NAME" git clone -b "$GIT_BRANCH" "$GIT_URL" "$DEPLOY_DIR"
+            sudo -u "$SITE_NAME" git clone -b "$GIT_BRANCH" "$GIT_URL" "$GIT_DIR"
         else
-            sudo -u "$SITE_NAME" git clone "$GIT_URL" "$DEPLOY_DIR"
+            sudo -u "$SITE_NAME" git clone "$GIT_URL" "$GIT_DIR"
         fi
 
-        log_info "Repository cloned successfully to $DEPLOY_DIR"
+        log_info "Repository cloned successfully to $GIT_DIR"
     else
         # Clone as root (original behavior for HTTPS or when no SSH key)
-        clone_repository "$GIT_URL" "$DEPLOY_DIR" "$GIT_BRANCH"
+        log_step "Cloning repository into $GIT_DIR..."
+
+        if [ -n "$GIT_BRANCH" ]; then
+            log_info "Cloning branch: $GIT_BRANCH"
+            git clone -b "$GIT_BRANCH" "$GIT_URL" "$GIT_DIR"
+        else
+            git clone "$GIT_URL" "$GIT_DIR"
+        fi
+
+        log_info "Repository cloned successfully to $GIT_DIR"
     fi
 
-    # Set ownership if user was created
+    # Set ownership of git directory if user was created
     if [ "$CREATE_USER" = "yes" ]; then
-        log_info "Setting ownership of $DEPLOY_DIR to $SITE_NAME"
-        chown -R "$SITE_NAME:$SITE_NAME" "$DEPLOY_DIR"
+        log_info "Setting ownership of $GIT_DIR to $SITE_NAME"
+        chown -R "$SITE_NAME:$SITE_NAME" "$GIT_DIR"
     fi
 
-    setup_environment "$DEPLOY_DIR" "$ENCRYPTION_KEY" "$ADDITIONAL_VARS"
-    setup_logging "$SITE_NAME" "$DEPLOY_DIR" "$SETUP_LOGROTATE"
-    setup_systemd_service "$SITE_NAME" "$DEPLOY_DIR" "$SETUP_SYSTEMD"
-    run_site_config "$DEPLOY_DIR" "$SITE_NAME"
+    setup_environment "$GIT_DIR" "$ENCRYPTION_KEY" "$ADDITIONAL_VARS"
+    setup_logging "$SITE_NAME" "$GIT_DIR" "$SETUP_LOGROTATE"
+    setup_systemd_service "$SITE_NAME" "$GIT_DIR" "$SETUP_SYSTEMD"
+    run_site_config "$GIT_DIR" "$SITE_NAME"
 
     # Final messages
     echo ""
@@ -689,9 +701,12 @@ main() {
     log_info "════════════════════════════════════════════"
     echo ""
     log_info "Site deployed to: $DEPLOY_DIR"
+    log_info "  - Helper scripts: $DEPLOY_DIR/bin/"
+    log_info "  - Git repository: $GIT_DIR"
+    log_info ""
     log_info "Next steps:"
-    echo "  1. Review and update .env file: $DEPLOY_DIR/.env"
-    echo "  2. Navigate to site: cd $DEPLOY_DIR"
+    echo "  1. Review and update .env file: $GIT_DIR/.env"
+    echo "  2. Navigate to repository: cd $GIT_DIR"
     echo "  3. Start services: docker compose up -d"
     echo ""
 
