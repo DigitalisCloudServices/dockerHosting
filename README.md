@@ -31,6 +31,9 @@ sudo ./setup.sh
 - Installs Docker and Docker Compose
 - Installs essential packages (git, curl, make, etc.)
 - Configures firewall (UFW)
+- Sets up security hardening (kernel params, SSH, fail2ban, audit logging)
+- Sets up automated security updates
+- Configures email notifications (optional - for alerts and system notifications)
 - Sets up log rotation
 - Adds current user to docker group
 
@@ -70,9 +73,12 @@ dockerHosting/
 ├── scripts/                      # Modular setup scripts
 │   ├── install-docker.sh         # Docker installation
 │   ├── install-packages.sh       # Package installation
+│   ├── install-nginx.sh          # Boundary Nginx installation
 │   ├── setup-users.sh            # User and permission management
 │   ├── setup-logrotate.sh        # Log rotation configuration
+│   ├── setup-email.sh            # Email notification setup
 │   ├── configure-firewall.sh     # Firewall setup
+│   ├── harden-*.sh               # Security hardening scripts
 │   └── configure-site.sh         # Site-specific configuration
 ├── templates/                    # Configuration templates
 │   ├── logrotate.conf.template   # Log rotation template
@@ -122,6 +128,28 @@ Deploy production and staging on the same server:
 sudo ./scripts/install-docker.sh
 ```
 
+### Setup Email Notifications
+
+Configure email notifications to receive system alerts:
+
+```bash
+sudo ./scripts/setup-email.sh
+```
+
+You'll be prompted for:
+- Email address to receive notifications
+- SMTP server (e.g., smtp.gmail.com)
+- SMTP port (default: 587)
+- SMTP credentials
+- TLS settings
+
+**Supported SMTP providers:**
+- Gmail (smtp.gmail.com:587) - use App Password
+- SendGrid (smtp.sendgrid.net:587)
+- Mailgun (smtp.mailgun.org:587)
+- Office 365 (smtp.office365.com:587)
+- Any SMTP relay service
+
 ### Configure Log Rotation for Existing Site
 
 ```bash
@@ -143,22 +171,38 @@ sudo ./scripts/setup-users.sh myapp /opt/myapp
 ## Features
 
 ### Security
-- Firewall configuration (UFW)
+- Firewall configuration (UFW) with default-deny policy
+- Kernel hardening (ASLR, SYN cookies, IP spoofing protection)
+- SSH hardening (key-only authentication, rate limiting)
+- fail2ban protection for brute-force prevention
+- Audit logging (auditd) for security events
+- Automated security updates (unattended-upgrades)
+- File integrity monitoring (AIDE)
+- Docker daemon hardening
 - User isolation per site
 - Proper file permissions
 - Secure secret handling
 
-### Logging
+### Logging & Monitoring
 - Automatic log rotation
 - Configurable retention periods
 - Docker container log limits
 - System log management
+- Email notifications for system alerts (optional)
+
+### Email Notifications
+- Lightweight SMTP relay using msmtp
+- System alerts and security notifications
+- Cron job output delivery
+- Configurable smarthost (Gmail, SendGrid, etc.)
+- Secure credential storage
 
 ### Deployment
 - Blue-green deployment support
 - Environment-based configuration
 - Git-based deployments
 - Artifact support
+- Boundary Nginx for routing by hostname
 
 ## Integration with Other Repositories
 
@@ -213,6 +257,32 @@ Check log rotation status:
 ```bash
 sudo cat /var/lib/logrotate/status
 ```
+
+### Email Notifications Not Working
+
+Check msmtp log file for errors:
+
+```bash
+sudo tail -f /var/log/msmtp.log
+```
+
+Test email sending manually:
+
+```bash
+echo "Test message" | mail -s "Test Subject" your@email.com
+```
+
+Verify msmtp configuration:
+
+```bash
+sudo cat /etc/msmtprc
+```
+
+Common issues:
+- **Gmail**: Use an App Password, not your regular password
+- **TLS errors**: Check if port 587 (TLS) or 465 (SSL) is correct for your provider
+- **Authentication failed**: Verify username/password are correct
+- **Blocked port**: Some ISPs block outbound port 25, use 587 instead
 
 ## Contributing
 

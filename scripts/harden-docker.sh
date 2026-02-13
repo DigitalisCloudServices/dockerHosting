@@ -34,7 +34,6 @@ cat > /etc/docker/daemon.json <<'EOF'
   },
   "icc": false,
   "userland-proxy": false,
-  "no-new-privileges": true,
   "live-restore": true,
   "default-ulimits": {
     "nofile": {
@@ -57,9 +56,6 @@ cat > /etc/docker/daemon.json <<'EOF'
   },
   "experimental": false,
   "metrics-addr": "127.0.0.1:9323",
-  "hosts": ["unix:///var/run/docker.sock"],
-  "tls": false,
-  "tlsverify": false,
   "debug": false
 }
 EOF
@@ -426,7 +422,16 @@ fi
 
 # Restart Docker to apply changes
 echo "[INFO] Restarting Docker daemon..."
-systemctl restart docker
+if ! systemctl restart docker; then
+    echo "[ERROR] Failed to restart Docker daemon!"
+    echo ""
+    echo "[ERROR] Recent Docker logs:"
+    journalctl -xeu docker.service -n 50 --no-pager
+    echo ""
+    echo "[ERROR] Daemon configuration may be invalid. Check /etc/docker/daemon.json"
+    echo "[ERROR] You can restore the backup from /etc/docker/daemon.json.backup.*"
+    exit 1
+fi
 
 # Wait for Docker to start
 sleep 3
@@ -436,7 +441,11 @@ if systemctl is-active --quiet docker; then
     echo "[INFO] Docker daemon restarted successfully"
 else
     echo "[ERROR] Docker daemon failed to start!"
-    echo "[ERROR] Check logs: journalctl -xeu docker"
+    echo ""
+    echo "[ERROR] Recent Docker logs:"
+    journalctl -xeu docker.service -n 50 --no-pager
+    echo ""
+    echo "[ERROR] You can restore the backup: cp /etc/docker/daemon.json.backup.* /etc/docker/daemon.json"
     exit 1
 fi
 

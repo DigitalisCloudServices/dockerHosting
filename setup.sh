@@ -211,6 +211,19 @@ run_full_setup() {
         bash "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh"
     fi
 
+    # Setup email notifications (optional)
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-email.sh" ]; then
+        echo ""
+        log_warn "Email notifications allow the system to send alerts, security notifications, and cron output."
+        read -p "Configure email notifications? (y/N) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            bash "$DOCKERHOSTING_DIR/scripts/setup-email.sh"
+        else
+            log_info "Skipping email configuration"
+        fi
+    fi
+
     # Harden SSH (do this last as it may affect connectivity)
     if [ -f "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" ]; then
         log_warn "Hardening SSH configuration..."
@@ -268,6 +281,9 @@ main() {
     echo "  ✓ Automated security updates (daily)"
     echo "  ✓ SSH hardening (key-only auth, rate limiting)"
     echo "  ✓ fail2ban protection (SSH brute-force prevention)"
+    if [ -f "/etc/msmtprc" ]; then
+        echo "  ✓ Email notifications configured"
+    fi
     echo ""
     log_warn "REQUIRED: Log out and log back in to apply group changes"
     echo ""
