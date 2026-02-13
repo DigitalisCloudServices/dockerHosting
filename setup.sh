@@ -129,10 +129,71 @@ run_full_setup() {
         bash "$DOCKERHOSTING_DIR/scripts/install-docker.sh"
     fi
 
+    # Install and configure boundary Nginx
+    if [ -f "$DOCKERHOSTING_DIR/scripts/install-nginx.sh" ]; then
+        log_info "Installing boundary Nginx..."
+        bash "$DOCKERHOSTING_DIR/scripts/install-nginx.sh"
+    fi
+
     # Configure firewall
     if [ -f "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" ]; then
         log_info "Configuring firewall..."
         bash "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh"
+    fi
+
+    # Harden kernel parameters
+    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh" ]; then
+        log_info "Hardening kernel parameters..."
+        bash "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh"
+    fi
+
+    # Setup audit logging
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-audit.sh" ]; then
+        log_info "Setting up audit logging..."
+        bash "$DOCKERHOSTING_DIR/scripts/setup-audit.sh"
+    fi
+
+    # Configure automated security updates
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh" ]; then
+        log_info "Configuring automated security updates..."
+        bash "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh"
+    fi
+
+    # Harden Docker daemon
+    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" ]; then
+        log_info "Hardening Docker daemon..."
+        bash "$DOCKERHOSTING_DIR/scripts/harden-docker.sh"
+    fi
+
+    # Configure PAM password policy
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh" ]; then
+        log_info "Configuring password policy..."
+        bash "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh"
+    fi
+
+    # Setup AIDE file integrity monitoring
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-aide.sh" ]; then
+        log_info "Setting up file integrity monitoring..."
+        bash "$DOCKERHOSTING_DIR/scripts/setup-aide.sh"
+    fi
+
+    # Harden shared memory
+    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh" ]; then
+        log_info "Hardening shared memory..."
+        bash "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh"
+    fi
+
+    # Enhanced fail2ban configuration
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh" ]; then
+        log_info "Configuring enhanced fail2ban protection..."
+        bash "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh"
+    fi
+
+    # Harden SSH (do this last as it may affect connectivity)
+    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" ]; then
+        log_warn "Hardening SSH configuration..."
+        log_warn "IMPORTANT: Ensure you have SSH keys configured before this step!"
+        bash "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh"
     fi
 
     # Setup log rotation
@@ -173,17 +234,32 @@ main() {
     log_info "Server setup completed successfully!"
     log_info "════════════════════════════════════════════"
     echo ""
-    log_warn "IMPORTANT: Please log out and log back in to apply group changes"
+    log_warn "IMPORTANT SECURITY NOTICE:"
+    log_warn "  - SSH password authentication is now DISABLED (keys only)"
+    log_warn "  - Root login via SSH is DISABLED"
+    log_warn "  - Test SSH access in a NEW terminal before logging out!"
+    echo ""
+    log_info "Security features enabled:"
+    echo "  ✓ Firewall (UFW) with default-deny"
+    echo "  ✓ Kernel hardening (ASLR, SYN cookies, anti-spoofing)"
+    echo "  ✓ Audit logging (auditd) for security events"
+    echo "  ✓ Automated security updates (daily)"
+    echo "  ✓ SSH hardening (key-only auth, rate limiting)"
+    echo "  ✓ fail2ban protection (SSH brute-force prevention)"
+    echo ""
+    log_warn "REQUIRED: Log out and log back in to apply group changes"
     echo ""
     log_info "Next steps:"
-    echo "  1. Log out and log back in"
-    echo "  2. Deploy a site using dockerHosting:"
+    echo "  1. Test SSH access in a NEW terminal window first!"
+    echo "  2. Log out and log back in"
+    echo "  3. Deploy a site using dockerHosting:"
     echo "     cd $DOCKERHOSTING_DIR && sudo ./deploy-site.sh"
-    echo "  3. Or manually clone your site repository to /opt/"
     echo ""
     log_info "Useful commands:"
     echo "  - Check Docker: docker --version"
     echo "  - Check firewall: sudo ufw status"
+    echo "  - Check audit logs: sudo ausearch -ts recent"
+    echo "  - Check security updates: cat /var/log/unattended-upgrades/unattended-upgrades.log"
     echo "  - Deploy site: cd $DOCKERHOSTING_DIR && sudo ./deploy-site.sh"
     echo ""
 }

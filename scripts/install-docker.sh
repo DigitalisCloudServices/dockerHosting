@@ -53,20 +53,6 @@ if [ -n "$SUDO_USER" ]; then
     echo "[INFO] Added $SUDO_USER to docker group"
 fi
 
-# Install Node Version Manager (optional, useful for many projects)
-if [ -n "$SUDO_USER" ]; then
-    echo "[INFO] Installing Node Version Manager for $SUDO_USER..."
-    sudo -u "$SUDO_USER" bash -c 'curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash'
-
-    # Load NVM and install Node 20
-    sudo -u "$SUDO_USER" bash -c '
-        export NVM_DIR="$HOME/.nvm"
-        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-        nvm install 20
-        nvm use 20
-    '
-fi
-
 # Verify installation
 echo ""
 echo "[INFO] Docker installation complete!"

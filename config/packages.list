@@ -1,73 +1,59 @@
 # Essential packages for Debian Trixie server
+# Minimal installation for Docker hosting environment
 # Lines starting with # are comments and will be ignored
 
 # Core utilities
 curl
 wget
 git
+rsync
 ca-certificates
 gnupg
 lsb-release
 apt-transport-https
 
-# Text editors
+# Text editor
 nano
 
 # System monitoring and administration
 htop
 iotop
-nethogs
+lsof
 net-tools
 dnsutils
-traceroute
-tcpdump
-lsof
 unattended-upgrades
-
-# Build tools
-build-essential
-make
-gcc
-g++
 
 # Security
 ufw
 fail2ban
+aide
+aide-common
+libpam-pwquality
+
+# Web server (boundary/routing)
+nginx
+
+# SSL/TLS certificates
+certbot
+openssl
 
 # Log management
 logrotate
 
-# File management and utilities
-rsync
+# Archive and compression tools
 unzip
 zip
-bzip2
+gzip
 tar
-tree
 
 # Shell utilities
 screen
 
-# JSON/YAML tools
+# Container operations
 jq
-yq
 
-# Performance monitoring
-sysstat
-dstat
+# Database clients (for debugging and maintenance)
+default-mysql-client
 
-# Backup tools
-duplicity
-
-# Python (useful for many automation tasks)
+# Python (system base only - no development tools)
 python3
-python3-pip
-python3-venv
-
-# Certbot (for Let's Encrypt SSL)
-certbot
-python3-certbot-nginx
-
-# Additional useful tools
-bc
-dos2unix

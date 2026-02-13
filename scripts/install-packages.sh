@@ -25,31 +25,34 @@ if [ -f "$CONFIG_DIR/packages.list" ]; then
 else
     echo "[WARN] packages.list not found, installing default packages..."
 
-    # Default essential packages
+    # Default essential packages (minimal installation)
     apt-get install -y \
         curl \
         wget \
         git \
-        nano \
-        htop \
-        net-tools \
-        dnsutils \
+        rsync \
         ca-certificates \
         gnupg \
         lsb-release \
         apt-transport-https \
-        build-essential \
-        make \
+        nano \
+        htop \
+        iotop \
+        lsof \
+        net-tools \
+        dnsutils \
+        unattended-upgrades \
         ufw \
         fail2ban \
         logrotate \
-        rsync \
         unzip \
+        zip \
+        gzip \
+        tar \
+        screen \
         jq \
-        tree \
-        ncdu \
-        tmux \
-        screen
+        default-mysql-client \
+        python3
 fi
 
 echo "[INFO] Package installation complete!"

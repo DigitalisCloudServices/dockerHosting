@@ -5,7 +5,7 @@
 #
 # Usage: ./setup-users.sh <site_name> <deploy_dir>
 #############################################
-
+Are 
 set -e
 
 SITE_NAME="$1"
@@ -27,11 +27,10 @@ else
     echo "[INFO] Created system user: $SITE_NAME"
 fi
 
-# Add user to docker group
-if getent group docker > /dev/null; then
-    usermod -aG docker "$SITE_NAME"
-    echo "[INFO] Added $SITE_NAME to docker group"
-fi
+# NOTE: User is NOT added to docker group for security reasons
+# Instead, controlled Docker access is granted via sudo rules
+# This prevents root-equivalent access while allowing necessary operations
+echo "[INFO] User $SITE_NAME will have controlled Docker access via sudo"
 
 # Create log directory for the site
 LOG_DIR="/var/log/$SITE_NAME"
@@ -67,6 +66,23 @@ if [ ! -d "$SSH_DIR" ]; then
     chown "$SITE_NAME:$SITE_NAME" "$SSH_DIR"
     chmod 700 "$SSH_DIR"
     echo "[INFO] Created SSH directory: $SSH_DIR"
+fi
+
+# Setup Docker permissions (sudo rules)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/setup-docker-permissions.sh" ]; then
+    echo "[INFO] Setting up Docker permissions..."
+    bash "$SCRIPT_DIR/setup-docker-permissions.sh" "$SITE_NAME" "$DEPLOY_DIR"
+else
+    echo "[WARN] setup-docker-permissions.sh not found, skipping Docker permissions"
+fi
+
+# Setup isolated Docker network for this site
+if [ -f "$SCRIPT_DIR/setup-docker-network.sh" ]; then
+    echo "[INFO] Setting up isolated Docker network..."
+    bash "$SCRIPT_DIR/setup-docker-network.sh" "$SITE_NAME"
+else
+    echo "[WARN] setup-docker-network.sh not found, skipping Docker network setup"
 fi
 
 echo "[INFO] User and permissions setup complete for $SITE_NAME"
