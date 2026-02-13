@@ -165,6 +165,83 @@ setup_user_permissions() {
     fi
 }
 
+# Setup SSH key for Git authentication
+setup_git_ssh_key() {
+    local site_name="$1"
+    local ssh_key="$2"
+    local git_url="$3"
+
+    if [ -z "$ssh_key" ]; then
+        log_info "No SSH key provided, skipping Git SSH setup"
+        return 0
+    fi
+
+    log_step "Setting up Git SSH authentication..."
+
+    # Determine home directory
+    local user_home
+    if [ "$site_name" = "root" ]; then
+        user_home="/root"
+    else
+        user_home="/home/$site_name"
+    fi
+
+    # Create .ssh directory
+    mkdir -p "$user_home/.ssh"
+    chmod 700 "$user_home/.ssh"
+
+    # Determine key type and filename
+    local key_file="$user_home/.ssh/id_ed25519"
+    if echo "$ssh_key" | grep -q "BEGIN RSA PRIVATE KEY"; then
+        key_file="$user_home/.ssh/id_rsa"
+    elif echo "$ssh_key" | grep -q "BEGIN OPENSSH PRIVATE KEY"; then
+        key_file="$user_home/.ssh/id_ed25519"
+    fi
+
+    # Save the SSH key
+    echo "$ssh_key" > "$key_file"
+    chmod 600 "$key_file"
+    chown "$site_name:$site_name" "$key_file"
+    log_info "Saved SSH key: $key_file"
+
+    # Extract Git host from URL
+    local git_host=""
+    if [[ "$git_url" =~ git@([^:]+): ]]; then
+        git_host="${BASH_REMATCH[1]}"
+    elif [[ "$git_url" =~ https?://([^/]+) ]]; then
+        git_host="${BASH_REMATCH[1]}"
+    fi
+
+    # Create SSH config for the Git host
+    if [ -n "$git_host" ]; then
+        local ssh_config="$user_home/.ssh/config"
+
+        # Check if config already has entry for this host
+        if [ -f "$ssh_config" ] && grep -q "Host $git_host" "$ssh_config"; then
+            log_info "SSH config already has entry for $git_host"
+        else
+            cat >> "$ssh_config" <<EOF
+
+# Git SSH configuration for $git_host
+Host $git_host
+    HostName $git_host
+    User git
+    IdentityFile $key_file
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+EOF
+            chmod 600 "$ssh_config"
+            chown "$site_name:$site_name" "$ssh_config"
+            log_info "Created SSH config for $git_host"
+        fi
+    fi
+
+    # Set ownership of .ssh directory
+    chown -R "$site_name:$site_name" "$user_home/.ssh"
+
+    log_info "Git SSH authentication configured for user: $site_name"
+}
+
 # Setup log rotation
 setup_logging() {
     local site_name="$1"
@@ -314,7 +391,7 @@ main() {
         exit 1
     fi
 
-    prompt_input "Deployment directory" "/opt/$SITE_NAME" "DEPLOY_DIR"
+    prompt_input "Deployment directory" "/opt/apps/$SITE_NAME" "DEPLOY_DIR"
     prompt_input "Git branch (leave empty for default)" "" "GIT_BRANCH"
 
     echo ""
@@ -326,6 +403,21 @@ main() {
 
     echo ""
     prompt_input "Encryption key (leave empty to skip)" "" "ENCRYPTION_KEY" true
+
+    echo ""
+    log_info "Git SSH authentication (for private repositories):"
+    read -p "Provide SSH private key for Git? (y/N) " -n 1 -r
+    echo
+    GIT_SSH_KEY=""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Paste SSH private key (press Ctrl+D when done):"
+        GIT_SSH_KEY=$(cat)
+        if [ -n "$GIT_SSH_KEY" ]; then
+            log_info "SSH key captured (will be configured for site user)"
+        else
+            log_warn "No SSH key provided"
+        fi
+    fi
 
     echo ""
     prompt_input "Additional environment variables (format: KEY=VALUE, leave empty to skip)" "" "ADDITIONAL_VARS"
@@ -340,6 +432,7 @@ main() {
     echo "  Deploy directory: $DEPLOY_DIR"
     echo "  Git branch: ${GIT_BRANCH:-default}"
     echo "  Create user: $CREATE_USER"
+    echo "  Git SSH key: $([ -n "$GIT_SSH_KEY" ] && echo "provided" || echo "not provided")"
     echo "  Setup log rotation: $SETUP_LOGROTATE"
     echo "  Setup systemd service: $SETUP_SYSTEMD"
     log_info "════════════════════════════════════════════"
@@ -359,6 +452,12 @@ main() {
 
     clone_repository "$GIT_URL" "$DEPLOY_DIR" "$GIT_BRANCH"
     setup_user_permissions "$SITE_NAME" "$DEPLOY_DIR" "$CREATE_USER"
+
+    # Setup Git SSH keys after user creation so the user can pull updates
+    if [ "$CREATE_USER" = "yes" ] && [ -n "$GIT_SSH_KEY" ]; then
+        setup_git_ssh_key "$SITE_NAME" "$GIT_SSH_KEY" "$GIT_URL"
+    fi
+
     setup_environment "$DEPLOY_DIR" "$ENCRYPTION_KEY" "$ADDITIONAL_VARS"
     setup_logging "$SITE_NAME" "$DEPLOY_DIR" "$SETUP_LOGROTATE"
     setup_systemd_service "$SITE_NAME" "$DEPLOY_DIR" "$SETUP_SYSTEMD"

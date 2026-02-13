@@ -47,18 +47,26 @@ Once the server is set up, deploy a new site from a Git repository:
 The script will interactively prompt for:
 - Git repository URL
 - Site name
-- Deployment directory (default: `/opt/{site-name}`)
+- Deployment directory (default: `/opt/apps/{site-name}`)
 - Encryption keys/secrets
+- Git SSH private key (optional - for private repositories)
 - User/group for the site
 - Additional configuration options
 
 **What it does:**
 - Clones the Git repository
 - Sets up users and permissions
+- Configures Git SSH authentication (if private key provided)
 - Configures log rotation for the site
 - Creates systemd service (optional)
 - Sets up environment files
 - Initializes Docker environment
+
+**Git SSH Keys:**
+When deploying from a private repository, you can provide an SSH private key. The script will:
+- Save the key securely for the site user (~/.ssh/)
+- Configure SSH to use the key for the Git host
+- Enable the site user to pull/push updates without password prompts
 
 ## Repository Structure
 
@@ -94,7 +102,7 @@ dockerHosting/
 # Enter when prompted:
 # - Git repo: https://github.com/DigitalisCloudServices/KSE-Portal.git
 # - Site name: kse-portal
-# - Directory: /opt/kse-portal
+# - Directory: /opt/apps/kse-portal
 # - User: kse-portal
 # - Encryption keys: [paste keys]
 ```
@@ -107,14 +115,35 @@ Deploy production and staging on the same server:
 # Production
 ./deploy-site.sh
 # Site name: myapp-prod
-# Directory: /opt/myapp-prod
+# Directory: /opt/apps/myapp-prod
 # Branch: main
 
 # Staging
 ./deploy-site.sh
 # Site name: myapp-staging
-# Directory: /opt/myapp-staging
+# Directory: /opt/apps/myapp-staging
 # Branch: develop
+```
+
+### Example 3: Deploy from Private Repository
+
+Deploy a site from a private Git repository using SSH key authentication:
+
+```bash
+./deploy-site.sh
+# Enter when prompted:
+# - Git repo: git@github.com:YourOrg/private-repo.git
+# - Site name: myapp
+# - Directory: /opt/apps/myapp
+# - Provide SSH private key for Git? y
+# - [Paste your SSH private key, then press Ctrl+D]
+# - Create dedicated user? yes
+```
+
+The SSH key will be saved securely and configured for the site user, allowing them to pull updates:
+```bash
+# As the site user, pull updates without password prompts
+sudo -u myapp git -C /opt/apps/myapp pull
 ```
 
 ## Manual Script Usage
@@ -150,13 +179,13 @@ You'll be prompted for:
 ### Configure Log Rotation for Existing Site
 
 ```bash
-sudo ./scripts/setup-logrotate.sh /opt/myapp myapp
+sudo ./scripts/setup-logrotate.sh myapp /opt/apps/myapp
 ```
 
 ### Setup User for Existing Site
 
 ```bash
-sudo ./scripts/setup-users.sh myapp /opt/myapp
+sudo ./scripts/setup-users.sh myapp /opt/apps/myapp
 ```
 
 ## Requirements
@@ -280,6 +309,36 @@ Common issues:
 - **TLS errors**: Check if port 587 (TLS) or 465 (SSL) is correct for your provider
 - **Authentication failed**: Verify username/password are correct
 - **Blocked port**: Some ISPs block outbound port 25, use 587 instead
+
+### Git SSH Authentication Issues
+
+If the site user cannot pull/push from Git:
+
+Check SSH key permissions:
+
+```bash
+# SSH key should be 600, .ssh directory should be 700
+sudo ls -la /home/site-user/.ssh/
+```
+
+Test SSH connection to Git host:
+
+```bash
+sudo -u site-user ssh -T git@github.com
+# Should show: "Hi username! You've successfully authenticated..."
+```
+
+Verify SSH config:
+
+```bash
+sudo cat /home/site-user/.ssh/config
+```
+
+Common issues:
+- **Permission denied (publickey)**: SSH key not added to Git provider (GitHub/GitLab/Bitbucket)
+- **Host key verification failed**: Remove offending key: `sudo -u site-user ssh-keygen -R github.com`
+- **Wrong key format**: Ensure you provided the private key, not the public key
+- **Key permissions**: Fix with `sudo chmod 600 /home/site-user/.ssh/id_*` and `sudo chown site-user:site-user /home/site-user/.ssh/id_*`
 
 ### AIDE File Integrity Monitoring
 

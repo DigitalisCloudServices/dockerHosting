@@ -245,7 +245,7 @@ run_full_setup() {
 
     # Create standard directories
     log_info "Creating standard directories..."
-    mkdir -p /opt
+    mkdir -p /opt/apps
     mkdir -p /var/log/docker-sites
 }
 
