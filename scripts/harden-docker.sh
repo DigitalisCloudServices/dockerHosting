@@ -16,6 +16,20 @@
 set -e
 
 echo "[INFO] Hardening Docker daemon configuration..."
+echo ""
+echo "User namespace remapping provides strong container isolation but can cause"
+echo "compatibility issues with volume permissions and existing containers."
+echo ""
+read -p "Enable user namespace remapping? (y/N) " -n 1 -r
+echo ""
+ENABLE_USERNS_REMAP=false
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    ENABLE_USERNS_REMAP=true
+    echo "[INFO] User namespace remapping will be enabled"
+else
+    echo "[INFO] User namespace remapping will be disabled (can enable later)"
+fi
+echo ""
 
 # Backup existing daemon.json if it exists
 if [ -f /etc/docker/daemon.json ]; then
@@ -24,7 +38,8 @@ if [ -f /etc/docker/daemon.json ]; then
 fi
 
 # Create comprehensive hardened daemon.json
-cat > /etc/docker/daemon.json <<'EOF'
+if [ "$ENABLE_USERNS_REMAP" = true ]; then
+    cat > /etc/docker/daemon.json <<'EOF'
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -59,6 +74,42 @@ cat > /etc/docker/daemon.json <<'EOF'
   "debug": false
 }
 EOF
+else
+    cat > /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3",
+    "labels": "production"
+  },
+  "icc": false,
+  "userland-proxy": false,
+  "live-restore": true,
+  "default-ulimits": {
+    "nofile": {
+      "Name": "nofile",
+      "Hard": 64000,
+      "Soft": 64000
+    }
+  },
+  "seccomp-profile": "/etc/docker/seccomp-default.json",
+  "selinux-enabled": false,
+  "default-shm-size": "64M",
+  "storage-driver": "overlay2",
+  "storage-opts": [
+    "overlay2.override_kernel_check=true"
+  ],
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "features": {
+    "buildkit": true
+  },
+  "experimental": false,
+  "metrics-addr": "127.0.0.1:9323",
+  "debug": false
+}
+EOF
+fi
 
 echo "[INFO] Created hardened /etc/docker/daemon.json"
 
@@ -403,21 +454,29 @@ EOF
 
 echo "[INFO] Created seccomp profile: /etc/docker/seccomp-default.json"
 
-# Setup user namespace remapping
-if ! getent subuid dockremap > /dev/null; then
-    echo "dockremap:100000:65536" >> /etc/subuid
-    echo "[INFO] Added dockremap to /etc/subuid"
-fi
+# Setup user namespace remapping (only if enabled)
+if [ "$ENABLE_USERNS_REMAP" = true ]; then
+    echo "[INFO] Setting up user namespace remapping..."
 
-if ! getent subgid dockremap > /dev/null; then
-    echo "dockremap:100000:65536" >> /etc/subgid
-    echo "[INFO] Added dockremap to /etc/subgid"
-fi
+    # Check if dockremap entry already exists in /etc/subuid
+    if ! grep -q "^dockremap:" /etc/subuid 2>/dev/null; then
+        echo "dockremap:100000:65536" >> /etc/subuid
+        echo "[INFO] Added dockremap to /etc/subuid"
+    fi
 
-# Create dockremap user if it doesn't exist
-if ! id dockremap &>/dev/null; then
-    useradd -r -s /usr/sbin/nologin -d /nonexistent dockremap
-    echo "[INFO] Created dockremap user"
+    # Check if dockremap entry already exists in /etc/subgid
+    if ! grep -q "^dockremap:" /etc/subgid 2>/dev/null; then
+        echo "dockremap:100000:65536" >> /etc/subgid
+        echo "[INFO] Added dockremap to /etc/subgid"
+    fi
+
+    # Create dockremap user if it doesn't exist
+    if ! id dockremap &>/dev/null; then
+        useradd -r -s /usr/sbin/nologin -d /nonexistent dockremap
+        echo "[INFO] Created dockremap user"
+    fi
+else
+    echo "[INFO] Skipping user namespace remapping setup"
 fi
 
 # Restart Docker to apply changes
