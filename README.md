@@ -38,13 +38,30 @@ sudo ./setup.sh
 
 ### 2. Deploy a New Site
 
-Once the server is set up, deploy a new site from a Git repository:
+Once the server is set up, deploy a new site from a Git repository.
+
+**Interactive mode** (prompts for all information):
 
 ```bash
 ./deploy-site.sh
 ```
 
-The script will interactively prompt for:
+**Scripted mode** (pass all parameters):
+
+```bash
+./deploy-site.sh \
+  --git-url "git@github.com:org/repo.git" \
+  --site-name "mysite" \
+  --deploy-dir "/opt/apps/mysite" \
+  --git-branch "main" \
+  --create-user yes \
+  --setup-logrotate yes \
+  --setup-systemd no \
+  --ssh-key-file "/path/to/ssh/key" \
+  --encryption-key "your-key"
+```
+
+In interactive mode, the script will prompt for:
 - Git repository URL
 - Site name
 - Deployment directory (default: `/opt/apps/{site-name}`)
@@ -61,6 +78,19 @@ The script will interactively prompt for:
 - Creates systemd service (optional)
 - Sets up environment files
 - Initializes Docker environment
+
+**Command-line Options:**
+- `--git-url <url>` - Git repository URL (required)
+- `--site-name <name>` - Site name (required)
+- `--deploy-dir <path>` - Deployment directory (default: /opt/apps/<site-name>)
+- `--git-branch <branch>` - Git branch to clone (optional)
+- `--create-user <yes|no>` - Create dedicated user (default: yes)
+- `--setup-logrotate <yes|no>` - Setup log rotation (default: yes)
+- `--setup-systemd <yes|no>` - Setup systemd service (default: no)
+- `--encryption-key <key>` - Encryption key (optional)
+- `--ssh-key-file <path>` - Path to SSH private key file (optional)
+- `--additional-vars <vars>` - Additional environment variables (optional)
+- `--non-interactive` - Run without prompts (auto-enabled when git-url and site-name provided)
 
 **Git SSH Keys:**
 When deploying from a private repository, you can provide an SSH private key. The script will:
@@ -144,6 +174,20 @@ The SSH key will be saved securely and configured for the site user, allowing th
 ```bash
 # As the site user, pull updates without password prompts
 sudo -u myapp git -C /opt/apps/myapp pull
+```
+
+After deployment, the script displays the exact command to replicate the deployment:
+```bash
+[INFO] To replicate this deployment, use:
+
+sudo ./deploy-site.sh \
+  --git-url "git@github.com:YourOrg/private-repo.git" \
+  --site-name "myapp" \
+  --deploy-dir "/opt/apps/myapp" \
+  --create-user yes \
+  --setup-logrotate yes \
+  --setup-systemd no \
+  --ssh-key-file "/path/to/ssh/key"
 ```
 
 ## Manual Script Usage

@@ -3,12 +3,29 @@
 #############################################
 # dockerHosting - Site Deployment Script
 #
-# Purpose: Interactive script to deploy a new site
+# Purpose: Deploy a new site (interactive or scripted)
 # - Prompts for Git repository and configuration
 # - Clones repository
 # - Sets up users and permissions
 # - Configures log rotation
 # - Sets up environment files
+#
+# Usage:
+#   Interactive: ./deploy-site.sh
+#   Scripted:    ./deploy-site.sh --git-url <url> --site-name <name> [options]
+#
+# Options:
+#   --git-url <url>              Git repository URL (required)
+#   --site-name <name>           Site name (required)
+#   --deploy-dir <path>          Deployment directory (default: /opt/apps/<site-name>)
+#   --git-branch <branch>        Git branch (optional)
+#   --create-user <yes|no>       Create dedicated user (default: yes)
+#   --setup-logrotate <yes|no>   Setup log rotation (default: yes)
+#   --setup-systemd <yes|no>     Setup systemd service (default: no)
+#   --encryption-key <key>       Encryption key (optional)
+#   --ssh-key-file <path>        Path to SSH private key file (optional)
+#   --additional-vars <vars>     Additional env vars (optional)
+#   --non-interactive            Run without prompts (default: interactive if no args)
 #############################################
 
 set -e  # Exit on error
@@ -367,14 +384,132 @@ run_site_config() {
     fi
 }
 
+# Parse command-line arguments
+parse_args() {
+    # Defaults
+    NON_INTERACTIVE=false
+
+    # Check if any arguments provided
+    if [ $# -eq 0 ]; then
+        return 0  # No args, run interactively
+    fi
+
+    # Parse arguments
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --git-url)
+                GIT_URL="$2"
+                shift 2
+                ;;
+            --site-name)
+                SITE_NAME="$2"
+                shift 2
+                ;;
+            --deploy-dir)
+                DEPLOY_DIR="$2"
+                shift 2
+                ;;
+            --git-branch)
+                GIT_BRANCH="$2"
+                shift 2
+                ;;
+            --create-user)
+                CREATE_USER="$2"
+                shift 2
+                ;;
+            --setup-logrotate)
+                SETUP_LOGROTATE="$2"
+                shift 2
+                ;;
+            --setup-systemd)
+                SETUP_SYSTEMD="$2"
+                shift 2
+                ;;
+            --encryption-key)
+                ENCRYPTION_KEY="$2"
+                shift 2
+                ;;
+            --ssh-key-file)
+                if [ ! -f "$2" ]; then
+                    log_error "SSH key file not found: $2"
+                    exit 1
+                fi
+                GIT_SSH_KEY=$(cat "$2")
+                SSH_KEY_FILE="$2"
+                shift 2
+                ;;
+            --additional-vars)
+                ADDITIONAL_VARS="$2"
+                shift 2
+                ;;
+            --non-interactive)
+                NON_INTERACTIVE=true
+                shift
+                ;;
+            *)
+                log_error "Unknown argument: $1"
+                echo ""
+                echo "Usage: $0 [options]"
+                echo "  --git-url <url>              Git repository URL"
+                echo "  --site-name <name>           Site name"
+                echo "  --deploy-dir <path>          Deployment directory"
+                echo "  --git-branch <branch>        Git branch"
+                echo "  --create-user <yes|no>       Create dedicated user"
+                echo "  --setup-logrotate <yes|no>   Setup log rotation"
+                echo "  --setup-systemd <yes|no>     Setup systemd service"
+                echo "  --encryption-key <key>       Encryption key"
+                echo "  --ssh-key-file <path>        SSH private key file"
+                echo "  --additional-vars <vars>     Additional environment variables"
+                echo "  --non-interactive            Run without prompts"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Mark as non-interactive if required args are provided
+    if [ -n "$GIT_URL" ] && [ -n "$SITE_NAME" ]; then
+        NON_INTERACTIVE=true
+    fi
+
+    # Validate required args for non-interactive mode
+    if [ "$NON_INTERACTIVE" = true ]; then
+        if [ -z "$GIT_URL" ]; then
+            log_error "Non-interactive mode requires --git-url"
+            exit 1
+        fi
+        if [ -z "$SITE_NAME" ]; then
+            log_error "Non-interactive mode requires --site-name"
+            exit 1
+        fi
+    fi
+}
+
 # Main deployment function
 main() {
     display_banner
     check_root
 
-    # Gather information
-    log_info "Please provide the following information:"
-    echo ""
+    # Parse command-line arguments
+    parse_args "$@"
+
+    # If non-interactive, set defaults for unspecified options
+    if [ "$NON_INTERACTIVE" = true ]; then
+        SITE_NAME=$(echo "$SITE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]-')
+        DEPLOY_DIR="${DEPLOY_DIR:-/opt/apps/$SITE_NAME}"
+        CREATE_USER="${CREATE_USER:-yes}"
+        SETUP_LOGROTATE="${SETUP_LOGROTATE:-yes}"
+        SETUP_SYSTEMD="${SETUP_SYSTEMD:-no}"
+        ENCRYPTION_KEY="${ENCRYPTION_KEY:-}"
+        GIT_SSH_KEY="${GIT_SSH_KEY:-}"
+        ADDITIONAL_VARS="${ADDITIONAL_VARS:-}"
+    else
+        # Interactive mode: Gather information
+        log_info "Please provide the following information:"
+        echo ""
+    fi
+
+    # Gather information (skip if non-interactive and values already set)
+    if [ "$NON_INTERACTIVE" != true ]; then
 
     prompt_input "Git repository URL" "" "GIT_URL"
 
@@ -422,7 +557,15 @@ main() {
     echo ""
     prompt_input "Additional environment variables (format: KEY=VALUE, leave empty to skip)" "" "ADDITIONAL_VARS"
 
-    # Confirmation
+    fi  # End of interactive block
+
+    # Validate Git URL if provided via args
+    if [ "$NON_INTERACTIVE" = true ] && ! validate_git_url "$GIT_URL"; then
+        log_error "Invalid Git URL: $GIT_URL"
+        exit 1
+    fi
+
+    # Confirmation / Summary
     echo ""
     log_info "════════════════════════════════════════════"
     log_info "Deployment Summary:"
@@ -438,11 +581,44 @@ main() {
     log_info "════════════════════════════════════════════"
     echo ""
 
-    read -p "Proceed with deployment? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log_warn "Deployment cancelled"
-        exit 0
+    # Generate replay command (shown before deployment in case of failure)
+    log_info "To replicate this deployment, use:"
+    echo ""
+    REPLAY_CMD="sudo ./deploy-site.sh \\"
+    REPLAY_CMD="$REPLAY_CMD\n  --git-url \"$GIT_URL\" \\"
+    REPLAY_CMD="$REPLAY_CMD\n  --site-name \"$SITE_NAME\" \\"
+    REPLAY_CMD="$REPLAY_CMD\n  --deploy-dir \"$DEPLOY_DIR\" \\"
+    if [ -n "$GIT_BRANCH" ]; then
+        REPLAY_CMD="$REPLAY_CMD\n  --git-branch \"$GIT_BRANCH\" \\"
+    fi
+    REPLAY_CMD="$REPLAY_CMD\n  --create-user $CREATE_USER \\"
+    REPLAY_CMD="$REPLAY_CMD\n  --setup-logrotate $SETUP_LOGROTATE \\"
+    REPLAY_CMD="$REPLAY_CMD\n  --setup-systemd $SETUP_SYSTEMD"
+    if [ -n "$ENCRYPTION_KEY" ]; then
+        REPLAY_CMD="$REPLAY_CMD \\\n  --encryption-key \"[REDACTED]\""
+    fi
+    if [ -n "$GIT_SSH_KEY" ]; then
+        if [ -n "$SSH_KEY_FILE" ]; then
+            REPLAY_CMD="$REPLAY_CMD \\\n  --ssh-key-file \"$SSH_KEY_FILE\""
+        else
+            REPLAY_CMD="$REPLAY_CMD \\\n  --ssh-key-file \"/path/to/ssh/key\""
+        fi
+    fi
+    if [ -n "$ADDITIONAL_VARS" ]; then
+        REPLAY_CMD="$REPLAY_CMD \\\n  --additional-vars \"$ADDITIONAL_VARS\""
+    fi
+
+    echo -e "$REPLAY_CMD"
+    echo ""
+
+    # Confirm only in interactive mode
+    if [ "$NON_INTERACTIVE" != true ]; then
+        read -p "Proceed with deployment? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_warn "Deployment cancelled"
+            exit 0
+        fi
     fi
 
     # Execute deployment steps
