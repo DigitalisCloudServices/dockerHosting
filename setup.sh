@@ -92,6 +92,14 @@ install_basic_packages() {
     log_info "Basic packages installed"
 }
 
+# Log the current branch and commit hash of the repository
+log_repo_version() {
+    local hash branch
+    hash=$(git -C "$DOCKERHOSTING_DIR" rev-parse --short HEAD 2>/dev/null)
+    branch=$(git -C "$DOCKERHOSTING_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    log_info "Repository version: ${branch} @ ${hash}"
+}
+
 # Clone dockerHosting repository
 clone_repository() {
     log_info "Cloning dockerHosting repository..."
@@ -108,6 +116,7 @@ clone_repository() {
                 cd "$DOCKERHOSTING_DIR"
                 if git pull; then
                     log_info "Repository updated successfully"
+                    log_repo_version
                     return 0
                 else
                     log_error "Failed to update repository"
@@ -115,6 +124,7 @@ clone_repository() {
                 fi
             else
                 log_info "Using existing directory without updating"
+                log_repo_version
                 return 0
             fi
         else
@@ -132,6 +142,7 @@ clone_repository() {
 
     if git clone "$DOCKERHOSTING_REPO" "$DOCKERHOSTING_DIR"; then
         log_info "Repository cloned successfully to $DOCKERHOSTING_DIR"
+        log_repo_version
     else
         log_error "Failed to clone repository"
         exit 1

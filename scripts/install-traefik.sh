@@ -218,12 +218,16 @@ start_traefik() {
     docker rm -f traefik 2>/dev/null || true
 
     log_info "Starting Traefik container..."
-    # --network host so that 127.0.0.1:PORT in site configs resolves to the
-    # host's loopback where site containers expose their ports.
+    # --network host: required so that 127.0.0.1:PORT in site configs resolves
+    # to the host's loopback where backend site containers expose their ports.
+    # --userns=host: required because the Linux kernel forbids combining
+    # userns-remap (daemon.json: "userns-remap":"default") with --network host.
+    # Traefik is a trusted infra component; all tenant containers keep userns protection.
     docker run -d \
         --name traefik \
         --restart unless-stopped \
         --network host \
+        --userns=host \
         -v /etc/traefik:/etc/traefik:ro \
         "traefik:${TRAEFIK_VERSION}"
 }

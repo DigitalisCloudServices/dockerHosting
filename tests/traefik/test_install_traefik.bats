@@ -238,6 +238,13 @@ EOF
     grep -q "\-\-network host" "$docker_log"
 }
 
+@test "start_traefik: sets --userns=host to allow --network host with userns-remap enabled" {
+    local docker_log="$BATS_TEST_TMPDIR/docker.log"
+    create_call_log_mock "docker" "$docker_log"
+    start_traefik
+    grep -q "\-\-userns=host" "$docker_log"
+}
+
 @test "start_traefik: does not use port bindings (host network makes them redundant)" {
     local docker_log="$BATS_TEST_TMPDIR/docker.log"
     create_call_log_mock "docker" "$docker_log"
