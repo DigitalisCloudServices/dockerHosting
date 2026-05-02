@@ -206,10 +206,8 @@ DASHBOARD_PASSWORD=""
 DASHBOARD_HASH=""
 
 generate_dashboard_password() {
-    # Letters, digits, and terminal-safe symbols only.
-    # Excluded: - ' ` " \ $ ! | & ; < > ( ) { } ~ * ? [ ] # ^ % space
-    DASHBOARD_PASSWORD=$(tr -cd 'A-Za-z0-9@_+=#.' </dev/urandom | head -c 32)
-    # Pipe via stdin to avoid leading-dash passwords being parsed as option flags
+    # openssl rand avoids the tr|head SIGPIPE that breaks set -euo pipefail
+    DASHBOARD_PASSWORD=$(openssl rand -hex 20)
     DASHBOARD_HASH=$(printf '%s' "$DASHBOARD_PASSWORD" | openssl passwd -apr1 -stdin)
 }
 
