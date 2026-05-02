@@ -8,6 +8,15 @@ set -e
 
 echo "[INFO] Configuring UFW firewall..."
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+    echo "[INFO] Firewall already configured and active — skipping (use --force to reconfigure)"
+    ufw status verbose
+    exit 0
+fi
+
 # Install UFW if not present
 if ! command -v ufw &> /dev/null; then
     echo "[INFO] Installing UFW..."

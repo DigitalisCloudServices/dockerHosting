@@ -1,3 +1,4 @@
+---
 name: CI
 
 on:
@@ -71,3 +72,24 @@ jobs:
 
       - name: Run Traefik tests
         run: bats --recursive tests/traefik/
+
+  test-yaml:
+    name: YAML validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: sudo apt-get update && sudo apt-get install -y yamllint
+
+      - name: Run YAML validation
+        run: |
+          yamllint -c .yamllint.yml \
+            templates/traefik/traefik.yml \
+            templates/traefik/middleware.yml \
+            .github/workflows/ci.yml
+
+      - name: Validate site.yml.template after substitution
+        run: >
+          sed 's/{{[A-Z_]*}}/placeholder/g' templates/traefik/site.yml.template
+          | yamllint -c .yamllint.yml -

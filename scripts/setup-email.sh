@@ -39,37 +39,45 @@ echo "║   Email Notification Setup                    ║"
 echo "╚═══════════════════════════════════════════════╝"
 echo ""
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && [[ -f /etc/msmtprc ]]; then
+    log_info "Email already configured (/etc/msmtprc exists) — skipping (use --force to reconfigure)"
+    exit 0
+fi
+
 # Prompt for email configuration
 echo "Configure system email notifications (for alerts, cron jobs, security notifications)"
 echo ""
 
-read -p "Email address to receive root/system emails: " ROOT_EMAIL
-if [ -z "$ROOT_EMAIL" ]; then
-    log_error "Email address is required"
-    exit 1
-fi
+while true; do
+    read -p "Email address to receive root/system emails: " ROOT_EMAIL
+    [[ -n "$ROOT_EMAIL" ]] && break
+    log_error "Email address is required, please try again"
+done
 
-read -p "SMTP server (smarthost) [e.g., smtp.gmail.com]: " SMTP_HOST
-if [ -z "$SMTP_HOST" ]; then
-    log_error "SMTP server is required"
-    exit 1
-fi
+while true; do
+    read -p "SMTP server (smarthost) [e.g., smtp.gmail.com]: " SMTP_HOST
+    [[ -n "$SMTP_HOST" ]] && break
+    log_error "SMTP server is required, please try again"
+done
 
 read -p "SMTP port [587]: " SMTP_PORT
 SMTP_PORT=${SMTP_PORT:-587}
 
-read -p "SMTP username: " SMTP_USER
-if [ -z "$SMTP_USER" ]; then
-    log_error "SMTP username is required"
-    exit 1
-fi
+while true; do
+    read -p "SMTP username: " SMTP_USER
+    [[ -n "$SMTP_USER" ]] && break
+    log_error "SMTP username is required, please try again"
+done
 
-read -sp "SMTP password: " SMTP_PASS
-echo ""
-if [ -z "$SMTP_PASS" ]; then
-    log_error "SMTP password is required"
-    exit 1
-fi
+while true; do
+    read -sp "SMTP password: " SMTP_PASS
+    echo ""
+    [[ -n "$SMTP_PASS" ]] && break
+    log_error "SMTP password is required, please try again"
+done
 
 read -p "From address [${SMTP_USER}]: " FROM_ADDRESS
 FROM_ADDRESS=${FROM_ADDRESS:-$SMTP_USER}

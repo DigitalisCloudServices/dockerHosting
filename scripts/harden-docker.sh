@@ -22,6 +22,15 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "[INFO] Hardening Docker daemon configuration..."
+
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && [[ -f /etc/docker/daemon.json ]] && grep -q '"icc": false' /etc/docker/daemon.json 2>/dev/null; then
+    echo "[INFO] Docker daemon already hardened — skipping (use --force to reconfigure)"
+    exit 0
+fi
+
 echo ""
 echo "User namespace remapping provides strong container isolation but can cause"
 echo "compatibility issues with volume permissions and existing containers."
@@ -39,7 +48,7 @@ echo ""
 
 # Backup existing daemon.json if it exists
 if [ -f /etc/docker/daemon.json ]; then
-    cp /etc/docker/daemon.json /etc/docker/daemon.json.backup.$(date +%Y%m%d-%H%M%S)
+    cp /etc/docker/daemon.json "/etc/docker/daemon.json.backup.$(date +%Y%m%d-%H%M%S)"
     echo "[INFO] Backed up existing daemon.json"
 fi
 

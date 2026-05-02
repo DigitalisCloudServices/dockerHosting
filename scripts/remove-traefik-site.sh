@@ -33,11 +33,14 @@ _domain_to_site_name() {
 }
 
 _list_sites() {
-    find "$TRAEFIK_DYNAMIC_DIR" -maxdepth 1 -name "*.yml" -not -name "middleware.yml" \
-        -exec basename {} .yml \; 2>/dev/null \
-        | sort \
-        | sed 's/^/  /' \
-        || echo "  (none)"
+    local sites
+    sites=$(find "$TRAEFIK_DYNAMIC_DIR" -maxdepth 1 -name "*.yml" -not -name "middleware.yml" \
+        -exec basename {} .yml \; 2>/dev/null | sort)
+    if [[ -z "$sites" ]]; then
+        echo "  (none)"
+    else
+        echo "$sites" | sed 's/^/  /'
+    fi
 }
 
 # ── main ─────────────────────────────────────────────────────────────────────

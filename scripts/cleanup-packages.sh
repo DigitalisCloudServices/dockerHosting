@@ -116,7 +116,6 @@ log_info "Checking for NVM installations..."
 NVM_FOUND=false
 for home_dir in /home/*; do
     if [ -d "$home_dir" ]; then
-        username=$(basename "$home_dir")
         nvm_dir="$home_dir/.nvm"
 
         if [ -d "$nvm_dir" ]; then

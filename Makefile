@@ -1,10 +1,10 @@
 # dockerHosting — development targets
-# Requires: shellcheck, bats (bats-core)
+# Requires: shellcheck, bats (bats-core), yamllint
 #
-# Install on macOS:  brew install shellcheck bats-core
-# Install on Debian: apt-get install shellcheck bats
+# Install on macOS:  brew install shellcheck bats-core yamllint
+# Install on Debian: apt-get install shellcheck bats yamllint
 
-.PHONY: help lint test test-traefik test-syntax test-args check-deps
+.PHONY: help lint test test-traefik test-syntax test-args test-yaml check-deps
 
 SHELL := /bin/bash
 
@@ -20,10 +20,11 @@ BATS := $(shell command -v bats 2>/dev/null || echo "")
 help:
 	@echo "Available targets:"
 	@echo "  make lint          Run shellcheck on all scripts"
-	@echo "  make test          Run full test suite (lint + bats)"
+	@echo "  make test          Run full test suite (lint + bats + yaml)"
 	@echo "  make test-traefik  Run Traefik script tests only"
 	@echo "  make test-syntax   Run bash syntax checks for all scripts"
 	@echo "  make test-args     Run argument-validation tests"
+	@echo "  make test-yaml     Run YAML validation checks"
 	@echo "  make check-deps    Check required tools are installed"
 
 # ── dependency check ─────────────────────────────────────────────────────────
@@ -40,6 +41,11 @@ check-deps:
 		     echo "  macOS:  brew install bats-core"; \
 		     echo "  Debian: apt-get install bats"; exit 1; }
 	@echo "  ✓ bats $(shell bats --version)"
+	@command -v yamllint >/dev/null 2>&1 \
+		|| { echo "ERROR: yamllint not found."; \
+		     echo "  macOS:  brew install yamllint"; \
+		     echo "  Debian: apt-get install yamllint"; exit 1; }
+	@echo "  ✓ yamllint $(shell yamllint --version 2>&1 | awk '{print $$2}')"
 	@echo "All dependencies present."
 
 # ── lint ─────────────────────────────────────────────────────────────────────
@@ -51,7 +57,7 @@ lint: check-deps
 
 # ── tests ────────────────────────────────────────────────────────────────────
 
-test: lint test-syntax test-args test-traefik
+test: lint test-syntax test-args test-traefik test-yaml
 	@echo "✓ All tests passed"
 
 test-traefik: check-deps
@@ -65,3 +71,7 @@ test-syntax: check-deps
 test-args: check-deps
 	@echo "Running argument validation tests..."
 	@bats tests/test_arg_validation.bats
+
+test-yaml: check-deps
+	@echo "Running YAML validation..."
+	@bats tests/test_yaml.bats

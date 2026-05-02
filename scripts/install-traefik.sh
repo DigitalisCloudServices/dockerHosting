@@ -26,11 +26,13 @@ DEPLOYED_APPS_DIR="${DEPLOYED_APPS_DIR:-/opt/apps}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="${TEMPLATE_DIR:-$(dirname "$SCRIPT_DIR")/templates}"
 
-# Parse --migrate-nginx flag
+# Parse flags
 MIGRATE_NGINX=""
+FORCE=false
 for arg in "$@"; do
     case "$arg" in
         --migrate-nginx=*) MIGRATE_NGINX="${arg#*=}" ;;
+        --force) FORCE=true ;;
     esac
 done
 
@@ -55,7 +57,8 @@ _nginx_is_present() {
 # ── migration helpers ────────────────────────────────────────────────────────
 
 _backup_nginx() {
-    local backup_dir="/root/nginx-backup-$(date +%Y%m%d-%H%M%S)"
+    local backup_dir
+    backup_dir="/root/nginx-backup-$(date +%Y%m%d-%H%M%S)"
     local nginx_version
     nginx_version=$(dpkg -l nginx 2>/dev/null | awk '/^ii/{print $3}' | head -1 || echo "unknown")
     cp -r /etc/nginx "$backup_dir"
@@ -74,8 +77,9 @@ _migrate_one_site() {
     local conf="$1"
     local domain port site_name cert_src
 
-    domain=$(grep -oP 'server_name\s+\K[^;]+' "$conf" 2>/dev/null | awk '{print $1}' | head -1 || true)
-    port=$(grep -oP 'proxy_pass\s+http://(?:127\.0\.0\.1|localhost):\K[0-9]+' "$conf" 2>/dev/null | head -1 || true)
+    domain=$(grep -oE 'server_name[[:space:]]+[^;]+' "$conf" 2>/dev/null | awk '{print $2}' | head -1 || true)
+    port=$(grep -oE 'proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):[0-9]+' "$conf" 2>/dev/null \
+           | grep -oE '[0-9]+$' | head -1 || true)
 
     if [[ -z "$domain" || "$domain" == "_" ]]; then
         log_warn "Skipping $conf — no server_name found"
@@ -97,7 +101,7 @@ _migrate_one_site() {
         log_info "  Linked certs: $cert_src"
     fi
 
-    if grep -qP 'location\s+[^/\{]' "$conf" 2>/dev/null; then
+    if grep -qE 'location[[:space:]]' "$conf" 2>/dev/null; then
         MIGRATION_WARNINGS+=("  ⚠  $(basename "$conf") — custom location blocks; add equivalent Traefik middleware manually")
     fi
 
@@ -245,6 +249,15 @@ main() {
     if [[ "$EUID" -ne 0 ]]; then
         log_error "This script must be run as root"
         exit 1
+    fi
+
+    local running_image
+    running_image=$(docker inspect traefik --format '{{.Config.Image}}' 2>/dev/null || true)
+    if [[ "$FORCE" == false ]] && \
+       [[ "$running_image" == "traefik:${TRAEFIK_VERSION}" ]] && \
+       docker inspect traefik --format '{{.State.Running}}' 2>/dev/null | grep -q "true"; then
+        log_info "Traefik ${TRAEFIK_VERSION} is already running — skipping (use --force to reinstall)"
+        exit 0
     fi
 
     log_info "Installing Traefik ${TRAEFIK_VERSION}..."

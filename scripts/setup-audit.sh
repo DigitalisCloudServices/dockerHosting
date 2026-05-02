@@ -11,6 +11,14 @@ set -e
 
 echo "[INFO] Setting up audit logging (auditd)..."
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && [[ -f /etc/audit/rules.d/99-security.rules ]] && systemctl is-active --quiet auditd 2>/dev/null; then
+    echo "[INFO] Audit logging already configured and active — skipping (use --force to reconfigure)"
+    exit 0
+fi
+
 # Install auditd and audispd-plugins
 echo "[INFO] Installing auditd..."
 apt-get update
@@ -18,7 +26,7 @@ apt-get install -y auditd audispd-plugins
 
 # Backup original audit rules if they exist
 if [ -f /etc/audit/rules.d/audit.rules ]; then
-    cp /etc/audit/rules.d/audit.rules /etc/audit/rules.d/audit.rules.backup.$(date +%Y%m%d)
+    cp /etc/audit/rules.d/audit.rules "/etc/audit/rules.d/audit.rules.backup.$(date +%Y%m%d)"
     echo "[INFO] Backed up existing audit rules"
 fi
 

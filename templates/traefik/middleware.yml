@@ -1,3 +1,4 @@
+---
 # Traefik Shared Middleware
 # Managed by dockerHosting
 # Applied automatically to all routes via security-headers@file

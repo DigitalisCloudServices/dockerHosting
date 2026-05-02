@@ -65,7 +65,7 @@ echo "[INFO] Created /etc/security/pwquality.conf"
 # Update common-password to use pwquality
 if ! grep -q "pam_pwquality.so" /etc/pam.d/common-password; then
     # Backup
-    cp /etc/pam.d/common-password /etc/pam.d/common-password.$(date +%Y%m%d)
+    cp /etc/pam.d/common-password "/etc/pam.d/common-password.$(date +%Y%m%d)"
 
     # Add pwquality before pam_unix
     sed -i '/pam_unix.so/i password    requisite    pam_pwquality.so retry=3' /etc/pam.d/common-password
@@ -82,7 +82,7 @@ fi
 # Configure account lockout after failed attempts
 if ! grep -q "pam_faillock.so" /etc/pam.d/common-auth; then
     # Backup
-    cp /etc/pam.d/common-auth /etc/pam.d/common-auth.$(date +%Y%m%d)
+    cp /etc/pam.d/common-auth "/etc/pam.d/common-auth.$(date +%Y%m%d)"
 
     # Add faillock before pam_unix
     sed -i '/pam_unix.so/i auth    required    pam_faillock.so preauth silent audit deny=5 unlock_time=900' /etc/pam.d/common-auth

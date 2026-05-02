@@ -11,6 +11,14 @@ set -e
 
 echo "[INFO] Hardening SSH configuration..."
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && [[ -f /etc/ssh/sshd_config.d/99-hardening.conf ]]; then
+    echo "[INFO] SSH already hardened (/etc/ssh/sshd_config.d/99-hardening.conf exists) — skipping (use --force to reconfigure)"
+    exit 0
+fi
+
 # Backup original sshd_config
 if [ ! -f /etc/ssh/sshd_config.backup ]; then
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup

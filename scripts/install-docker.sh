@@ -8,6 +8,16 @@
 
 set -e
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && command -v docker &>/dev/null && systemctl is-active --quiet docker 2>/dev/null; then
+    echo "[INFO] Docker is already installed and running — skipping (use --force to reinstall)"
+    docker --version
+    docker compose version
+    exit 0
+fi
+
 echo "[INFO] Installing Docker and Docker Compose..."
 
 # Update package index
@@ -46,6 +56,26 @@ apt-get install -y \
 
 # Allow docker in rootless mode to work on ports lower than 1024
 setcap 'cap_net_bind_service=+ep' /usr/bin/docker
+
+# Lower CPU/IO scheduling weight so containers yield to SSH and system processes
+# under contention. Default weight is 100; 20 deprioritises containers without
+# starving them. Applied to both daemon and containerd (where container processes
+# actually live).
+mkdir -p /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/resource-limits.conf <<'EOF'
+[Service]
+CPUWeight=20
+IOWeight=20
+EOF
+
+mkdir -p /etc/systemd/system/containerd.service.d
+cat > /etc/systemd/system/containerd.service.d/resource-limits.conf <<'EOF'
+[Service]
+CPUWeight=20
+IOWeight=20
+EOF
+
+systemctl daemon-reload
 
 # Start and enable Docker service
 systemctl start docker

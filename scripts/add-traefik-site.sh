@@ -119,8 +119,8 @@ _check_traefik_running() {
 # ── main ─────────────────────────────────────────────────────────────────────
 
 main() {
-    local domain="$1"
-    local port="$2"
+    local domain="${1:-}"
+    local port="${2:-}"
     local site_name="${3:-}"
 
     _validate_inputs "$domain" "$port" || exit 1

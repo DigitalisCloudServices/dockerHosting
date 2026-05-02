@@ -139,82 +139,124 @@ clone_repository() {
 }
 
 # Run full setup from repository
+# Usage: run_full_setup [--force[=step1,step2,...]]
+#   --force            force-run every step even if already configured
+#   --force=docker     force only the named step(s); comma-separated
+#   Valid step names: packages, docker, traefik, firewall, kernel, audit,
+#                     auto-updates, harden-docker, pam, aide, shm, fail2ban,
+#                     email, ssh, logrotate
 run_full_setup() {
     log_info "Running full setup from repository scripts..."
     echo ""
+
+    # Parse --force / --force=steps
+    local FORCE_ALL=false
+    local FORCE_STEPS=""
+    for arg in "$@"; do
+        case "$arg" in
+            --force)          FORCE_ALL=true ;;
+            --force=*)        FORCE_STEPS="${arg#*=}" ;;
+        esac
+    done
+
+    # Returns true if a given step name should be forced
+    _step_forced() {
+        local step="$1"
+        [[ "$FORCE_ALL" == true ]] && return 0
+        [[ -n "$FORCE_STEPS" ]] && echo "$FORCE_STEPS" | grep -qE "(^|,)${step}(,|$)" && return 0
+        return 1
+    }
+
+    # Builds the --force flag string for a subscript if the step is forced
+    _flag() {
+        local step="$1"
+        _step_forced "$step" && echo "--force" || echo ""
+    }
 
     cd "$DOCKERHOSTING_DIR"
 
     # Install packages from repository config
     if [ -f "$DOCKERHOSTING_DIR/scripts/install-packages.sh" ]; then
         log_info "Installing additional packages..."
-        bash "$DOCKERHOSTING_DIR/scripts/install-packages.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/install-packages.sh" $(_flag packages)
     fi
 
     # Install Docker
     if [ -f "$DOCKERHOSTING_DIR/scripts/install-docker.sh" ]; then
         log_info "Installing Docker..."
-        bash "$DOCKERHOSTING_DIR/scripts/install-docker.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/install-docker.sh" $(_flag docker)
     fi
 
     # Install Traefik as boundary proxy
     if [ -f "$DOCKERHOSTING_DIR/scripts/install-traefik.sh" ]; then
         log_info "Installing Traefik boundary proxy..."
-        bash "$DOCKERHOSTING_DIR/scripts/install-traefik.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/install-traefik.sh" $(_flag traefik)
     fi
 
     # Configure firewall
     if [ -f "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" ]; then
         log_info "Configuring firewall..."
-        bash "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" $(_flag firewall)
     fi
 
     # Harden kernel parameters
     if [ -f "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh" ]; then
         log_info "Hardening kernel parameters..."
-        bash "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh" $(_flag kernel)
     fi
 
     # Setup audit logging
     if [ -f "$DOCKERHOSTING_DIR/scripts/setup-audit.sh" ]; then
         log_info "Setting up audit logging..."
-        bash "$DOCKERHOSTING_DIR/scripts/setup-audit.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/setup-audit.sh" $(_flag audit)
     fi
 
     # Configure automated security updates
     if [ -f "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh" ]; then
         log_info "Configuring automated security updates..."
-        bash "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh" $(_flag auto-updates)
     fi
 
     # Harden Docker daemon
     if [ -f "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" ]; then
         log_info "Hardening Docker daemon..."
-        bash "$DOCKERHOSTING_DIR/scripts/harden-docker.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" $(_flag harden-docker)
     fi
 
     # Configure PAM password policy
     if [ -f "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh" ]; then
         log_info "Configuring password policy..."
-        bash "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh" $(_flag pam)
     fi
 
     # Setup AIDE file integrity monitoring
     if [ -f "$DOCKERHOSTING_DIR/scripts/setup-aide.sh" ]; then
         log_info "Setting up file integrity monitoring..."
-        bash "$DOCKERHOSTING_DIR/scripts/setup-aide.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/setup-aide.sh" $(_flag aide)
     fi
 
     # Harden shared memory
     if [ -f "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh" ]; then
         log_info "Hardening shared memory..."
-        bash "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh" $(_flag shm)
     fi
 
     # Enhanced fail2ban configuration
     if [ -f "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh" ]; then
         log_info "Configuring enhanced fail2ban protection..."
-        bash "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh" $(_flag fail2ban)
     fi
 
     # Setup email notifications (optional)
@@ -224,7 +266,8 @@ run_full_setup() {
         read -p "Configure email notifications? (y/N) " -n 1 -r
         echo ""
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            bash "$DOCKERHOSTING_DIR/scripts/setup-email.sh"
+            # shellcheck disable=SC2046
+            bash "$DOCKERHOSTING_DIR/scripts/setup-email.sh" $(_flag email)
         else
             log_info "Skipping email configuration"
         fi
@@ -234,7 +277,8 @@ run_full_setup() {
     if [ -f "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" ]; then
         log_warn "Hardening SSH configuration..."
         log_warn "IMPORTANT: Ensure you have SSH keys configured before this step!"
-        bash "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh"
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" $(_flag ssh)
     fi
 
     # Setup log rotation
@@ -266,8 +310,8 @@ main() {
     clone_repository
     echo ""
 
-    # Step 3: Run full setup from repository
-    run_full_setup
+    # Step 3: Run full setup from repository (forward --force / --force=steps)
+    run_full_setup "$@"
 
     # Final messages
     echo ""

@@ -17,6 +17,14 @@ set -e
 
 echo "[INFO] Setting up enhanced fail2ban configuration..."
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && [[ -f /etc/fail2ban/jail.d/nginx-enhanced.conf ]] && [[ -f /etc/fail2ban/jail.d/sshd-enhanced.conf ]]; then
+    echo "[INFO] Enhanced fail2ban already configured — skipping (use --force to reconfigure)"
+    exit 0
+fi
+
 # Ensure fail2ban is installed
 if ! command -v fail2ban-client &> /dev/null; then
     echo "[ERROR] fail2ban is not installed"

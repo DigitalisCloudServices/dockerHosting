@@ -11,6 +11,14 @@ set -e
 
 echo "[INFO] Applying kernel hardening via sysctl..."
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && [[ -f /etc/sysctl.d/99-security.conf ]]; then
+    echo "[INFO] Kernel already hardened (/etc/sysctl.d/99-security.conf exists) — skipping (use --force to reconfigure)"
+    exit 0
+fi
+
 # Create sysctl security configuration
 cat > /etc/sysctl.d/99-security.conf <<'EOF'
 # Kernel Hardening Configuration

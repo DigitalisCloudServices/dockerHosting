@@ -1,0 +1,9 @@
+extends: default
+
+rules:
+  document-start: enable      # all YAML files must start with ---
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false          # allows GitHub Actions "on:" trigger key
+  line-length:
+    max: 120                   # workflow files can have longer lines

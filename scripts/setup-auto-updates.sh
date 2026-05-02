@@ -11,6 +11,17 @@ set -e
 
 echo "[INFO] Configuring automated security updates..."
 
+FORCE=false
+for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+
+if [[ "$FORCE" == false ]] && \
+   [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]] && \
+   [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]] && \
+   systemctl is-active --quiet unattended-upgrades 2>/dev/null; then
+    echo "[INFO] Automated security updates already configured — skipping (use --force to reconfigure)"
+    exit 0
+fi
+
 # Install unattended-upgrades if not present
 if ! dpkg -l | grep -q unattended-upgrades; then
     echo "[INFO] Installing unattended-upgrades..."
@@ -20,7 +31,7 @@ fi
 
 # Backup original configuration if exists
 if [ -f /etc/apt/apt.conf.d/50unattended-upgrades ]; then
-    cp /etc/apt/apt.conf.d/50unattended-upgrades /etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d)
+    cp /etc/apt/apt.conf.d/50unattended-upgrades "/etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d)"
     echo "[INFO] Backed up existing configuration"
 fi
 
