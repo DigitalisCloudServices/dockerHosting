@@ -157,10 +157,10 @@ run_full_setup() {
         bash "$DOCKERHOSTING_DIR/scripts/install-docker.sh"
     fi
 
-    # Install and configure boundary Nginx
-    if [ -f "$DOCKERHOSTING_DIR/scripts/install-nginx.sh" ]; then
-        log_info "Installing boundary Nginx..."
-        bash "$DOCKERHOSTING_DIR/scripts/install-nginx.sh"
+    # Install Traefik as boundary proxy
+    if [ -f "$DOCKERHOSTING_DIR/scripts/install-traefik.sh" ]; then
+        log_info "Installing Traefik boundary proxy..."
+        bash "$DOCKERHOSTING_DIR/scripts/install-traefik.sh"
     fi
 
     # Configure firewall
@@ -287,6 +287,9 @@ main() {
     echo "  ✓ Automated security updates (daily)"
     echo "  ✓ SSH hardening (key-only auth, rate limiting)"
     echo "  ✓ fail2ban protection (SSH brute-force prevention)"
+    if docker ps --filter "name=^traefik$" --filter "status=running" --format "{{.Names}}" 2>/dev/null | grep -q "^traefik$"; then
+        echo "  ✓ Traefik v3.6 reverse proxy (ports 80/443, dashboard on 127.0.0.1:8080)"
+    fi
     if [ -f "/etc/msmtprc" ]; then
         echo "  ✓ Email notifications configured"
     fi
@@ -301,10 +304,13 @@ main() {
     echo ""
     log_info "Useful commands:"
     echo "  - Check Docker: docker --version"
+    echo "  - Check Traefik: docker ps --filter name=traefik"
+    echo "  - Traefik dashboard: curl http://127.0.0.1:8080/api/version"
     echo "  - Check firewall: sudo ufw status"
     echo "  - Check audit logs: sudo ausearch -ts recent"
     echo "  - Check security updates: cat /var/log/unattended-upgrades/unattended-upgrades.log"
     echo "  - Deploy site: cd $DOCKERHOSTING_DIR && sudo ./deploy-site.sh"
+    echo "  - Add Traefik route: sudo $DOCKERHOSTING_DIR/scripts/add-traefik-site.sh <domain> <port>"
     echo ""
 }
 

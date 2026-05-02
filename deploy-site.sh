@@ -706,8 +706,12 @@ main() {
     log_info ""
     log_info "Next steps:"
     echo "  1. Review and update .env file: $GIT_DIR/.env"
+    echo "     - Set SITE_HOSTNAME to your domain"
+    echo "     - Set SITE_PORT to the port your container exposes on localhost"
     echo "  2. Navigate to repository: cd $GIT_DIR"
-    echo "  3. Start services: docker compose up -d"
+    echo "  3. Start services: sudo docker compose up -d"
+    echo "  4. Add Traefik route (uses SITE_HOSTNAME and SITE_PORT from .env):"
+    echo "     sudo /opt/dockerHosting/scripts/add-traefik-site.sh <domain> <port>"
     echo ""
 
     if [ "$SETUP_SYSTEMD" = "yes" ]; then

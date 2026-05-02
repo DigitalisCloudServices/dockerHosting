@@ -1,0 +1,20 @@
+# Traefik Shared Middleware
+# Managed by dockerHosting
+# Applied automatically to all routes via security-headers@file
+
+http:
+  middlewares:
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+    rate-limit:
+      rateLimit:
+        average: 10
+        burst: 20
+        period: 1s

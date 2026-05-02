@@ -66,15 +66,6 @@ cd "$(dirname "$0")/.."
 echo "[INFO] Starting Docker Compose services..."
 sudo docker compose up -d "$@"
 echo "[INFO] Services started successfully"
-echo "[INFO] Testing boundary Nginx configuration..."
-if sudo nginx -t 2>&1; then
-    echo "[INFO] Reloading boundary Nginx..."
-    sudo systemctl reload nginx
-    echo "[INFO] Done!"
-else
-    echo "[ERROR] Nginx configuration test failed!"
-    exit 1
-fi
 SCRIPT_EOF
 
 # Helper: docker-down
@@ -133,30 +124,22 @@ fi
 sudo docker compose exec "$@"
 SCRIPT_EOF
 
-# Helper: nginx-reload
-cat > "$HELPERS_DIR/nginx-reload" <<'SCRIPT_EOF'
+# Helper: traefik-status
+cat > "$HELPERS_DIR/traefik-status" <<'SCRIPT_EOF'
 #!/bin/bash
-set -e
-echo "[INFO] Testing boundary Nginx configuration..."
-if sudo nginx -t 2>&1; then
-    echo "[INFO] Reloading boundary Nginx..."
-    sudo systemctl reload nginx
-    echo "[INFO] Nginx reloaded successfully"
-else
-    echo "[ERROR] Nginx configuration test failed!"
-    exit 1
-fi
-SCRIPT_EOF
-
-# Helper: nginx-status
-cat > "$HELPERS_DIR/nginx-status" <<'SCRIPT_EOF'
-#!/bin/bash
-sudo systemctl status nginx
+echo "[INFO] Traefik container status:"
+sudo docker ps --filter "name=^traefik$" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+echo ""
+echo "[INFO] Active routes (requires curl on localhost):"
+curl -sf http://127.0.0.1:8080/api/http/routers 2>/dev/null \
+    | grep -oP '"name":"\K[^"]+' \
+    | sed 's/^/  /' \
+    || echo "  (Traefik API not reachable)"
 SCRIPT_EOF
 
 # Make all helper scripts executable
 chmod +x "$HELPERS_DIR"/docker-*
-chmod +x "$HELPERS_DIR"/nginx-*
+chmod +x "$HELPERS_DIR"/traefik-*
 
 # Set ownership to site user
 chown -R "$SITE_USER:$SITE_USER" "$HELPERS_DIR"
@@ -173,7 +156,7 @@ with proper permissions (via sudo).
 ## Available Commands
 
 ### Docker Operations
-- `./docker-up` - Start all services (and reload nginx)
+- `./docker-up` - Start all services
 - `./docker-down` - Stop all services
 - `./docker-restart [service]` - Restart services
 - `./docker-logs [service]` - View logs
@@ -181,9 +164,8 @@ with proper permissions (via sudo).
 - `./docker-pull` - Pull latest images
 - `./docker-exec <service> [command]` - Execute command in container
 
-### Nginx Operations
-- `./nginx-reload` - Test and reload boundary Nginx
-- `./nginx-status` - Check Nginx status
+### Traefik Operations
+- `./traefik-status` - Check Traefik container status and active routes
 
 ## Examples
 
@@ -218,15 +200,18 @@ sudo docker compose logs -f web
 sudo docker compose exec web bash
 ```
 
-## Boundary Nginx
+## Traefik Routing
 
-After making changes to your site's .env or docker-compose.yml that affect
-the exposed port or hostname, regenerate the boundary Nginx config and reload:
+After deploying, add a Traefik route using the domain and port from your .env:
 
 ```bash
-# This is typically done by the deployment script, but can be done manually:
-sudo /opt/dockerHosting/scripts/configure-nginx-site.sh <site_name> <deploy_dir>
-./bin/nginx-reload
+sudo /opt/dockerHosting/scripts/add-traefik-site.sh <domain> <port>
+```
+
+To remove a route:
+
+```bash
+sudo /opt/dockerHosting/scripts/remove-traefik-site.sh <domain>
 ```
 README_EOF
 
@@ -246,7 +231,7 @@ echo "  - Use helper scripts in: $HELPERS_DIR"
 echo ""
 echo "[INFO] Helper scripts available:"
 echo "  docker-up, docker-down, docker-restart, docker-logs,"
-echo "  docker-ps, docker-pull, docker-exec, nginx-reload, nginx-status"
+echo "  docker-ps, docker-pull, docker-exec, traefik-status"
 echo ""
 echo "[WARN] User is NOT in docker group (no root-equivalent access)"
 echo "[INFO] All Docker operations require sudo with restricted permissions"

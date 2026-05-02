@@ -1,0 +1,15 @@
+# shellcheck configuration for dockerHosting
+# https://www.shellcheck.net/wiki/
+
+# Target shell: bash (scripts use #!/bin/bash)
+shell=bash
+
+# SC1091: Not following sourced files (runtime paths not available at lint time)
+disable=SC1091
+
+# SC2034: Variable appears unused (false positives for variables used in templates/eval)
+# Not globally disabled — fix individual cases with # shellcheck disable=SC2034
+
+# SC2312: Consider invoking separately to avoid masking return value
+# Allowed when intentional — disable per-site with inline comment
+disable=SC2312
