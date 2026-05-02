@@ -202,6 +202,91 @@ check_nginx_migration() {
 
 # ── install ──────────────────────────────────────────────────────────────────
 
+DASHBOARD_PASSWORD=""
+DASHBOARD_HASH=""
+
+generate_dashboard_password() {
+    # Letters, digits, and terminal-safe symbols only.
+    # Excluded: - ' ` " \ $ ! | & ; < > ( ) { } ~ * ? [ ] # ^ % space
+    DASHBOARD_PASSWORD=$(tr -cd 'A-Za-z0-9@_+=#.' </dev/urandom | head -c 32)
+    # Pipe via stdin to avoid leading-dash passwords being parsed as option flags
+    DASHBOARD_HASH=$(printf '%s' "$DASHBOARD_PASSWORD" | openssl passwd -apr1 -stdin)
+}
+
+write_dashboard_config() {
+    local creds_file="$TRAEFIK_DIR/dashboard-credentials"
+
+    # Write dynamic config with BasicAuth router for the dashboard
+    cat > "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" <<EOF
+---
+# Traefik Dashboard - BasicAuth Protected
+# Managed by dockerHosting - do not edit by hand
+http:
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        users:
+          - "admin:${DASHBOARD_HASH}"
+  routers:
+    dashboard:
+      rule: "PathPrefix(\`/\`)"
+      service: api@internal
+      middlewares:
+        - dashboard-auth
+      entryPoints:
+        - traefik
+EOF
+    chmod 640 "$TRAEFIK_DYNAMIC_DIR/dashboard.yml"
+
+    # Store plaintext credentials for operator reference (root-only)
+    cat > "$creds_file" <<EOF
+# Traefik Dashboard Credentials
+# Generated: $(date)
+# URL: http://<server-ip>:8080/dashboard/
+username: admin
+password: ${DASHBOARD_PASSWORD}
+EOF
+    chmod 600 "$creds_file"
+    log_info "Dashboard credentials saved to $creds_file (root-readable only)"
+}
+
+prompt_firewall_8080() {
+    command -v ufw &>/dev/null || return 0
+    ufw status 2>/dev/null | grep -q "Status: active" || return 0
+
+    echo ""
+    log_warn "Traefik dashboard is bound to all interfaces on port 8080."
+    log_warn "UFW is active — port 8080 is currently blocked from external access."
+    echo "  Options:"
+    echo "    1) Allow from a specific IP only (recommended)"
+    echo "    2) Allow from anywhere (not recommended)"
+    echo "    3) Leave blocked (access via SSH tunnel: ssh -L 8080:localhost:8080 user@server)"
+    echo ""
+    local choice
+    read -r -p "Choice [1/2/3]: " choice
+    echo
+    case "$choice" in
+        1)
+            local src_ip
+            read -r -p "Source IP address to allow: " src_ip
+            echo
+            if [[ -z "$src_ip" ]]; then
+                log_warn "No IP entered — leaving port 8080 blocked."
+            else
+                ufw allow from "$src_ip" to any port 8080 proto tcp comment 'Traefik dashboard'
+                log_info "Firewall: port 8080 allowed from $src_ip"
+            fi
+            ;;
+        2)
+            ufw allow 8080/tcp comment 'Traefik dashboard'
+            log_warn "Firewall: port 8080 open to all — ensure dashboard credentials are strong!"
+            ;;
+        3|*)
+            log_info "Port 8080 remains blocked. SSH tunnel: ssh -L 8080:localhost:8080 user@server"
+            ;;
+    esac
+}
+
 write_configs() {
     log_info "Writing Traefik static config..."
     cp "$TEMPLATE_DIR/traefik/traefik.yml" "$TRAEFIK_DIR/traefik.yml"
@@ -210,6 +295,9 @@ write_configs() {
     log_info "Writing shared middleware config..."
     cp "$TEMPLATE_DIR/traefik/middleware.yml" "$TRAEFIK_DYNAMIC_DIR/middleware.yml"
     chmod 644 "$TRAEFIK_DYNAMIC_DIR/middleware.yml"
+
+    generate_dashboard_password
+    write_dashboard_config
 }
 
 start_traefik() {
@@ -236,9 +324,9 @@ verify_traefik() {
     log_info "Waiting for Traefik API..."
     local retries=15
     while [[ $retries -gt 0 ]]; do
-        if curl -sf http://127.0.0.1:8080/api/version >/dev/null 2>&1; then
+        if curl -sf -u "admin:${DASHBOARD_PASSWORD}" http://127.0.0.1:8080/api/version >/dev/null 2>&1; then
             local ver
-            ver=$(curl -sf http://127.0.0.1:8080/api/version 2>/dev/null \
+            ver=$(curl -sf -u "admin:${DASHBOARD_PASSWORD}" http://127.0.0.1:8080/api/version 2>/dev/null \
                   | grep -oP '"Version":"\K[^"]+' || echo "unknown")
             log_info "Traefik is running (version: $ver)"
             return 0
@@ -273,13 +361,20 @@ main() {
     write_configs
     start_traefik
     verify_traefik
+    prompt_firewall_8080
 
     echo ""
     log_info "════════════════════════════════════════════"
     log_info "Traefik ${TRAEFIK_VERSION} installation complete!"
     log_info "════════════════════════════════════════════"
     echo ""
-    echo "  Dashboard (localhost only): http://127.0.0.1:8080"
+    echo "  Dashboard: http://<server-ip>:8080/dashboard/"
+    echo "  Username:  admin"
+    echo "  Password:  ${DASHBOARD_PASSWORD}"
+    echo ""
+    log_warn "Save these credentials — the password is stored at:"
+    log_warn "  ${TRAEFIK_DIR}/dashboard-credentials  (root-readable only)"
+    echo ""
     echo "  Dynamic configs: $TRAEFIK_DYNAMIC_DIR/"
     echo "  SSL certs:       $TRAEFIK_CERTS_DIR/"
     echo ""

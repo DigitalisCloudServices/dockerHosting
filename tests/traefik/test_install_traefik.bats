@@ -222,6 +222,55 @@ EOF
     assert_file_contains "$TRAEFIK_DIR/traefik.yml" "websecure"
 }
 
+@test "write_configs: traefik.yml binds dashboard to all interfaces (:8080)" {
+    write_configs
+    assert_file_contains "$TRAEFIK_DIR/traefik.yml" '":8080"'
+}
+
+@test "write_configs: traefik.yml has insecure: false" {
+    write_configs
+    assert_file_contains "$TRAEFIK_DIR/traefik.yml" "insecure: false"
+}
+
+@test "write_configs: creates dashboard.yml in dynamic dir" {
+    write_configs
+    assert_file_exists "$TRAEFIK_DYNAMIC_DIR/dashboard.yml"
+}
+
+@test "write_configs: dashboard.yml contains basicAuth middleware" {
+    write_configs
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" "basicAuth"
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" "dashboard-auth"
+}
+
+@test "write_configs: dashboard.yml router targets api@internal" {
+    write_configs
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" "api@internal"
+}
+
+@test "write_configs: dashboard.yml uses traefik entrypoint" {
+    write_configs
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" "traefik"
+}
+
+@test "write_configs: dashboard credentials file is created" {
+    write_configs
+    assert_file_exists "$TRAEFIK_DIR/dashboard-credentials"
+}
+
+@test "write_configs: dashboard credentials file contains username and password fields" {
+    write_configs
+    assert_file_contains "$TRAEFIK_DIR/dashboard-credentials" "username: admin"
+    assert_file_contains "$TRAEFIK_DIR/dashboard-credentials" "password:"
+}
+
+@test "write_configs: generated password is at least 32 characters" {
+    write_configs
+    local password
+    password=$(grep "^password:" "$TRAEFIK_DIR/dashboard-credentials" | awk '{print $2}')
+    [ "${#password}" -ge 32 ]
+}
+
 # ── start_traefik ─────────────────────────────────────────────────────────────
 
 @test "start_traefik: pulls correct image tag" {

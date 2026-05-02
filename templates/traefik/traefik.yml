@@ -14,7 +14,7 @@ entryPoints:
   websecure:
     address: ":443"
   traefik:
-    address: "127.0.0.1:8080"
+    address: ":8080"
 
 providers:
   file:
@@ -23,7 +23,7 @@ providers:
 
 api:
   dashboard: true
-  insecure: true
+  insecure: false
 
 log:
   level: INFO

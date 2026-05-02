@@ -30,12 +30,12 @@ aide
 aide-common
 libpam-pwquality
 
-# Web server (boundary/routing)
-nginx
-
 # SSL/TLS certificates
 certbot
 openssl
+
+# Password generation
+pwgen
 
 # Log management
 logrotate

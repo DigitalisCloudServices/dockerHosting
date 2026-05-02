@@ -343,7 +343,10 @@ main() {
     echo "  ✓ SSH hardening (key-only auth, rate limiting)"
     echo "  ✓ fail2ban protection (SSH brute-force prevention)"
     if docker ps --filter "name=^traefik$" --filter "status=running" --format "{{.Names}}" 2>/dev/null | grep -q "^traefik$"; then
-        echo "  ✓ Traefik v3.6 reverse proxy (ports 80/443, dashboard on 127.0.0.1:8080)"
+        echo "  ✓ Traefik v3.6 reverse proxy (ports 80/443, dashboard on :8080 — BasicAuth protected)"
+        if [ -f "/etc/traefik/dashboard-credentials" ]; then
+            echo "    Dashboard credentials: /etc/traefik/dashboard-credentials"
+        fi
     fi
     if [ -f "/etc/msmtprc" ]; then
         echo "  ✓ Email notifications configured"
@@ -360,7 +363,7 @@ main() {
     log_info "Useful commands:"
     echo "  - Check Docker: docker --version"
     echo "  - Check Traefik: docker ps --filter name=traefik"
-    echo "  - Traefik dashboard: curl http://127.0.0.1:8080/api/version"
+    echo "  - Traefik dashboard: http://<server-ip>:8080/dashboard/ (see /etc/traefik/dashboard-credentials)"
     echo "  - Check firewall: sudo ufw status"
     echo "  - Check audit logs: sudo ausearch -ts recent"
     echo "  - Check security updates: cat /var/log/unattended-upgrades/unattended-upgrades.log"

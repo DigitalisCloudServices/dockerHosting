@@ -51,6 +51,7 @@ else
         tar \
         screen \
         jq \
+        pwgen \
         default-mysql-client \
         python3
 fi
