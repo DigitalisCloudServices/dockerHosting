@@ -218,7 +218,7 @@ if [ "$HARDENED" = true ]; then
     echo ""
     echo "[WARN] IMPORTANT: Containers now run in isolated networks"
     echo "[WARN] Each site will have its own Docker network"
-    echo "[WARN] Cross-site communication ONLY via boundary Nginx"
+    echo "[WARN] Cross-site communication ONLY via boundary Traefik"
     echo ""
     echo "[INFO] Configuration file: /etc/docker/daemon.json"
     if [ "$ENABLE_USERNS_REMAP" = true ]; then

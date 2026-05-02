@@ -214,12 +214,12 @@ start_traefik() {
     docker rm -f traefik 2>/dev/null || true
 
     log_info "Starting Traefik container..."
+    # --network host so that 127.0.0.1:PORT in site configs resolves to the
+    # host's loopback where site containers expose their ports.
     docker run -d \
         --name traefik \
         --restart unless-stopped \
-        -p 80:80 \
-        -p 443:443 \
-        -p 127.0.0.1:8080:8080 \
+        --network host \
         -v /etc/traefik:/etc/traefik:ro \
         "traefik:${TRAEFIK_VERSION}"
 }

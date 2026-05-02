@@ -231,25 +231,18 @@ EOF
     grep -q "pull traefik:v3.6" "$docker_log"
 }
 
-@test "start_traefik: starts container with port 80 binding" {
+@test "start_traefik: uses host network mode" {
     local docker_log="$BATS_TEST_TMPDIR/docker.log"
     create_call_log_mock "docker" "$docker_log"
     start_traefik
-    grep -q "\-p 80:80" "$docker_log"
+    grep -q "\-\-network host" "$docker_log"
 }
 
-@test "start_traefik: starts container with port 443 binding" {
+@test "start_traefik: does not use port bindings (host network makes them redundant)" {
     local docker_log="$BATS_TEST_TMPDIR/docker.log"
     create_call_log_mock "docker" "$docker_log"
     start_traefik
-    grep -q "\-p 443:443" "$docker_log"
-}
-
-@test "start_traefik: restricts dashboard to localhost" {
-    local docker_log="$BATS_TEST_TMPDIR/docker.log"
-    create_call_log_mock "docker" "$docker_log"
-    start_traefik
-    grep -q "127.0.0.1:8080:8080" "$docker_log"
+    ! grep -q "\-p 80:80" "$docker_log"
 }
 
 @test "start_traefik: mounts /etc/traefik as read-only" {

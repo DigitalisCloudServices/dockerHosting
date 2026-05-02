@@ -5,7 +5,7 @@
 #
 # Creates a dedicated Docker network for each site
 # Enables complete isolation between sites
-# Only boundary Nginx can route between sites
+# Only boundary Traefik can route between sites
 #
 # Usage: ./setup-docker-network.sh <site_name>
 #############################################
@@ -56,7 +56,7 @@ echo "[INFO] ══════════════════════�
 echo ""
 echo "[INFO] Network: $NETWORK_NAME"
 echo "  Isolation: Complete (no inter-container communication with other sites)"
-echo "  Access: Only via host network (boundary Nginx)"
+echo "  Access: Only via host network (boundary Traefik)"
 echo ""
 echo "[INFO] Docker Compose configuration:"
 echo "  Add to your docker-compose.yml:"

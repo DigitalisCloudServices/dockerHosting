@@ -226,7 +226,7 @@ echo "[INFO] ══════════════════════�
 echo ""
 echo "[INFO] User $SITE_USER can now:"
 echo "  - Manage Docker Compose in: $DEPLOY_DIR"
-echo "  - Reload boundary Nginx"
+echo "  - Check boundary Traefik status"
 echo "  - Use helper scripts in: $HELPERS_DIR"
 echo ""
 echo "[INFO] Helper scripts available:"

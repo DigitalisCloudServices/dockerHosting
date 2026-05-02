@@ -515,11 +515,11 @@ make check-deps
 
 | Test file | What it covers |
 |-----------|---------------|
-| `tests/test_syntax.bats` | `bash -n` parse check for all 28 shell scripts |
+| `tests/test_syntax.bats` | `bash -n` parse check for all shell scripts |
 | `tests/test_arg_validation.bats` | Scripts exit non-zero + print usage when required args are missing |
 | `tests/traefik/test_add_site.bats` | 28 tests: validation, config generation, site naming, SSL cert logic, Traefik running check |
 | `tests/traefik/test_remove_site.bats` | 13 tests: removal, site listing, domain-to-name conversion |
-| `tests/traefik/test_install_traefik.bats` | 28 tests: nginx detection, migration helpers, config writing, docker invocations, prompt flags |
+| `tests/traefik/test_install_traefik.bats` | 26 tests: nginx detection, migration helpers, config writing, docker invocations, prompt flags |
 
 ### Adding tests for new scripts
 
