@@ -593,7 +593,7 @@ main() {
     decrypt_artifact \
         "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download" \
         "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}" \
-        "${DEPLOY_DIR}/infra/artifact-crypto/decrypt.sh" \
+        "${SCRIPT_DIR}/lib/decrypt.sh" \
         "${DEPLOY_DIR}/infra/secrets"
     rm -f "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download"
     _env_set "FRONTEND_ARTIFACT" "./artifact-cache/${FRONTEND_ARTIFACT}" "$env_file"
@@ -606,7 +606,7 @@ main() {
     decrypt_artifact \
         "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download" \
         "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}" \
-        "${DEPLOY_DIR}/infra/artifact-crypto/decrypt.sh" \
+        "${SCRIPT_DIR}/lib/decrypt.sh" \
         "${DEPLOY_DIR}/infra/secrets"
     rm -f "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download"
     _env_set "WORDPRESS_ARTIFACT" "./artifact-cache/${WORDPRESS_ARTIFACT}" "$env_file"
