@@ -257,7 +257,7 @@ parse_args() {
     SETUP_LOGROTATE="yes"
     SETUP_TIMER="yes"
 
-    [[ $# -eq 0 ]] && return 0
+    if [[ $# -eq 0 ]]; then return 0; fi
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -282,11 +282,11 @@ parse_args() {
         esac
     done
 
-    [[ -n "$SITE_NAME" && -n "$GCS_KEY_FILE" ]] && NON_INTERACTIVE=true
+    if [[ -n "$SITE_NAME" && -n "$GCS_KEY_FILE" ]]; then NON_INTERACTIVE=true; fi
 
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        [[ -z "$SITE_NAME" ]]    && { log_error "--site-name required";    exit 1; }
-        [[ -z "$GCS_KEY_FILE" ]] && { log_error "--gcs-key-file required"; exit 1; }
+        [[ -n "$SITE_NAME" ]]    || { log_error "--site-name required";    exit 1; }
+        [[ -n "$GCS_KEY_FILE" ]] || { log_error "--gcs-key-file required"; exit 1; }
     fi
 }
 
@@ -357,8 +357,8 @@ main() {
     fi
     apply_defaults
 
-    [[ -z "$SITE_NAME" ]]    && { log_error "Site name is required";          exit 1; }
-    [[ -z "$GCS_KEY_FILE" ]] && { log_error "GCS service account key required"; exit 1; }
+    [[ -n "$SITE_NAME" ]]    || { log_error "Site name is required";          exit 1; }
+    [[ -n "$GCS_KEY_FILE" ]] || { log_error "GCS service account key required"; exit 1; }
     [[ -f "$GCS_KEY_FILE" ]] || { log_error "GCS key file not found: $GCS_KEY_FILE"; exit 1; }
 
     # Kong port
@@ -394,7 +394,7 @@ main() {
 
     if [[ "$NON_INTERACTIVE" != "true" ]]; then
         read -rp "Proceed? [Y/n]: " input
-        [[ "${input,,}" == "n" ]] && { log_warn "Deployment cancelled"; exit 0; }
+        if [[ "${input,,}" == "n" ]]; then log_warn "Deployment cancelled"; exit 0; fi
     fi
 
     # ── Replay command ────────────────────────────────────────────────────────
@@ -403,9 +403,9 @@ main() {
     echo ""
     printf "  sudo %s/deploy-site.sh \\\\\n" "$SCRIPT_DIR"
     printf "    --site-name '%s' \\\\\n" "$SITE_NAME"
-    [[ "$SITE_USER" != "$SITE_NAME" ]] && printf "    --site-user '%s' \\\\\n" "$SITE_USER"
+    if [[ "$SITE_USER" != "$SITE_NAME" ]]; then printf "    --site-user '%s' \\\\\n" "$SITE_USER"; fi
     printf "    --deploy-dir '%s' \\\\\n" "$DEPLOY_DIR"
-    [[ -n "$DOMAIN" ]]      && printf "    --domain '%s' \\\\\n" "$DOMAIN"
+    if [[ -n "$DOMAIN" ]]; then printf "    --domain '%s' \\\\\n" "$DOMAIN"; fi
     printf "    --kong-port '%s' \\\\\n" "$KONG_PORT"
     printf "    --gcs-bucket '%s' \\\\\n" "$GCS_BUCKET"
     printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
@@ -535,10 +535,10 @@ main() {
     log_step "6/8  Environment (.env) + artifact download"
 
     local env_file="${DEPLOY_DIR}/.env"
-    [[ ! -f "$env_file" ]] && touch "$env_file"
+    if [[ ! -f "$env_file" ]]; then touch "$env_file"; fi
 
     _env_set "KONG_HTTPS_PORT"    "$KONG_PORT"          "$env_file"
-    [[ -n "$DOMAIN" ]] && _env_set "SITE_HOSTNAME" "$DOMAIN"    "$env_file"
+    if [[ -n "$DOMAIN" ]]; then _env_set "SITE_HOSTNAME" "$DOMAIN" "$env_file"; fi
     _env_set "INFRA_HASH"         "$INFRA_HASH"         "$env_file"
     _env_set "INFRA_ARTIFACT"     "./artifact-cache/${INFRA_ARTIFACT}"  "$env_file"
     _env_set "FRONTEND_GIT_HASH"  "$FRONTEND_HASH"      "$env_file"
@@ -597,7 +597,8 @@ main() {
                 e)
                     read -rp "  Domain [${DOMAIN}]: " ed; DOMAIN="${ed:-$DOMAIN}"
                     read -rp "  Port   [${KONG_PORT}]: " ep; KONG_PORT="${ep:-$KONG_PORT}"
-                    [[ -f "$traefik_script" ]] && bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME"
+                    if [[ -f "$traefik_script" ]]; then bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME"
+                    else log_warn "add-traefik-site.sh not found"; fi
                     ;;
                 n) log_note "Skipping Traefik — run manually: $traefik_cmd" ;;
             esac
@@ -635,14 +636,15 @@ main() {
     printf "  %-20s %s\n" "Site:" "$SITE_NAME"
     printf "  %-20s %s\n" "Directory:" "$DEPLOY_DIR"
     printf "  %-20s %s\n" "System user:" "$SITE_USER (nologin)"
-    [[ -n "$DOMAIN" ]] && printf "  %-20s %s\n" "Domain:" "$DOMAIN"
+    if [[ -n "$DOMAIN" ]]; then printf "  %-20s %s\n" "Domain:" "$DOMAIN"; fi
     printf "  %-20s %s\n" "Kong port:" "$KONG_PORT"
     echo ""
     log_info "Next steps:"
     echo "  1. Review .env:      ${DEPLOY_DIR}/.env"
     echo "  2. Start stack:      cd ${DEPLOY_DIR} && docker compose up -d"
-    [[ "$SETUP_TIMER" == "yes" ]] && \
-    echo "  3. Check updates:    ${DEPLOY_DIR}/bin/update-now"
+    if [[ "$SETUP_TIMER" == "yes" ]]; then
+        echo "  3. Check updates:    ${DEPLOY_DIR}/bin/update-now"
+    fi
     echo ""
 }
 
