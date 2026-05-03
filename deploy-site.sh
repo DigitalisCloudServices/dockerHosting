@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
-# deploy-site.sh — Deploy a new site from a Git repository
+# deploy-site.sh — Deploy a new site from GCS artifacts
 #
-# Interactive or scripted deployment that:
-#   - Creates a per-site system user (nologin shell by default)
-#   - Clones the repository and sets ownership
-#   - Auto-allocates a Kong HTTPS port from 8443+
-#   - Provisions GitHub token and artifact infrastructure
-#   - Test-pulls artifacts and detects encryption; provisions keys if needed
-#   - Suggests and optionally applies Traefik routing
-#   - Installs a 15-minute systemd updater timer with an update-now helper
+# Downloads all site components from GCS. No git access required.
+# The server only needs a GCS service account key.
+#
+# Flow:
+#   1. Authenticate to GCS with service account key
+#   2. Download channel metadata JSON
+#   3. Download + extract infra artifact (docker-compose.yml, nginx, Kong, scripts)
+#   4. Provision secrets (GCS key, optional encryption keys)
+#   5. Download frontend + wordpress artifacts to artifact-cache
+#   6. Configure .env, Traefik, logrotate, systemd updater timer
 #
 # Usage:
 #   Interactive:  sudo ./deploy-site.sh
-#   Scripted:     sudo ./deploy-site.sh --git-url <url> --site-name <name> [options]
+#   Scripted:     sudo ./deploy-site.sh --site-name <name> --gcs-key-file <path> [options]
 #
 # Options:
-#   --git-url <url>              Git repository URL (required)
-#   --site-name <name>           Site name — alphanumeric + hyphens (required)
-#   --site-user <user>           System user for site files (default: <site-name>)
-#   --deploy-dir <path>          Deployment directory (default: /opt/apps/<site-name>)
-#   --domain <hostname>          Site hostname for Traefik routing
-#   --git-branch <branch>        Git branch (optional, defaults to repo default)
-#   --kong-port <port>           Kong internal HTTPS port (default: auto-detect from 8443)
-#   --gcs-key-file <path>        Path to GCS service account JSON key file
-#   --create-user <yes|no>       Create dedicated system user (default: yes)
-#   --setup-logrotate <yes|no>   Set up log rotation (default: yes)
-#   --setup-timer <yes|no>       Install systemd updater timer (default: yes)
-#   --ssh-key-file <path>        SSH private key for Git cloning (optional)
-#   --non-interactive            Skip all prompts (requires --git-url and --site-name)
+#   --site-name <name>       Site name — alphanumeric + hyphens (required)
+#   --site-user <user>       System user for site files (default: <site-name>)
+#   --deploy-dir <path>      Deployment directory (default: /opt/apps/<site-name>)
+#   --gcs-bucket <url>       GCS bucket URL (default: gs://velaair-website-artifacts)
+#   --gcs-key-file <path>    Path to GCS service account JSON key file (required)
+#   --domain <hostname>      Site hostname for Traefik routing
+#   --kong-port <port>       Kong internal HTTPS port (default: auto-detect from 8443)
+#   --create-user <yes|no>   Create dedicated system user (default: yes)
+#   --setup-logrotate <yes|no> Set up log rotation (default: yes)
+#   --setup-timer <yes|no>   Install systemd updater timer (default: yes)
+#   --non-interactive        Skip all prompts (requires --site-name and --gcs-key-file)
 
 set -euo pipefail
 
@@ -67,27 +67,15 @@ display_banner() {
 find_next_kong_port() {
     local port="${1:-8443}"
     local used=""
-    # Collect ports already claimed in deployed site .env files
     if [[ -d /opt/apps ]]; then
         used=$(grep -rh "^KONG_HTTPS_PORT=" /opt/apps/ 2>/dev/null | \
                cut -d= -f2 | tr -d '"' | sort -n || true)
     fi
-    # Advance past claimed or listening ports
     while echo "$used" | grep -qx "$port" || \
           ss -tlnp 2>/dev/null | awk '{print $4}' | grep -q ":${port}$"; do
         port=$((port + 1))
     done
     echo "$port"
-}
-
-# ── GitHub helpers ────────────────────────────────────────────────────────────
-
-infer_github_repo() {
-    # https://github.com/owner/repo.git  →  owner/repo
-    # git@github.com:owner/repo.git      →  owner/repo
-    echo "$1" | sed -E \
-        's|^https?://github\.com/([^/]+/[^.]+)(\.git)?$|\1|;
-         s|^git@github\.com:([^/]+/[^.]+)(\.git)?$|\1|'
 }
 
 # ── .env helpers ──────────────────────────────────────────────────────────────
@@ -114,6 +102,20 @@ artifact_is_encrypted() {
     tar tzf "$bundle" 2>/dev/null | grep -q "^payload\.enc$"
 }
 
+decrypt_artifact() {
+    local bundle="$1" dest="$2" decrypt_sh="$3" secrets_dir="$4"
+    local pub_key_file="${secrets_dir}/artifact_signing_public_key.pem"
+    local aes_key_file="${secrets_dir}/artifact_aes_key.txt"
+    if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
+        ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
+        ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
+        bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+    else
+        SKIP_ENCRYPTION=true bash "${decrypt_sh}" \
+            --bundle "${bundle}" --out-tar "${dest}"
+    fi
+}
+
 # ── Systemd timer ─────────────────────────────────────────────────────────────
 
 install_updater_timer() {
@@ -137,8 +139,7 @@ StandardError=journal
 SyslogIdentifier=${svc_name}
 EOF
 
-    # 15-minute poll with ±5 min random jitter (10-minute window) so that
-    # multiple sites or servers don't hammer GitHub simultaneously.
+    # 15-minute poll with ±5 min random jitter (10-minute window)
     cat > "/etc/systemd/system/${svc_name}.timer" <<EOF
 [Unit]
 Description=${site_name} — check for artifact updates every 15 minutes
@@ -156,36 +157,25 @@ EOF
 
     systemctl daemon-reload
     systemctl enable --now "${svc_name}.timer"
-    log_info "Timer enabled: ${svc_name}.timer (every 15 min, ±60 s jitter)"
-    log_info "Trigger now:   systemctl start ${svc_name}.service"
+    log_info "Timer enabled: ${svc_name}.timer (every 15 min, ±5 min jitter)"
 }
 
 add_update_now_sudoers() {
-    local site_user="$1"
-    local site_name="$2"
+    local site_user="$1" site_name="$2"
     local sudoers_file="/etc/sudoers.d/updater-${site_user}"
-
     cat > "$sudoers_file" <<EOF
-# Allow ${site_user} to trigger an on-demand artifact update
 ${site_user} ALL=(root) NOPASSWD: /usr/bin/systemctl start ${site_name}-updater.service
 EOF
     chmod 0440 "$sudoers_file"
     chown root:root "$sudoers_file"
-    if ! visudo -c -f "$sudoers_file" 2>/dev/null; then
-        log_warn "sudoers validation failed — removing $sudoers_file"
-        rm -f "$sudoers_file"
-    fi
+    visudo -c -f "$sudoers_file" 2>/dev/null || { rm -f "$sudoers_file"; log_warn "sudoers validation failed"; }
 }
 
 create_update_now_helper() {
-    local site_name="$1"
-    local helpers_dir="$2"
-    local site_user="$3"
-
+    local site_name="$1" helpers_dir="$2" site_user="$3"
     mkdir -p "$helpers_dir"
     cat > "${helpers_dir}/update-now" <<HELPER
 #!/bin/bash
-# Trigger an immediate artifact update check for ${site_name}
 echo "[${site_name}] Triggering update check..."
 sudo systemctl start ${site_name}-updater.service
 echo "[${site_name}] Job started — follow logs:"
@@ -199,42 +189,33 @@ HELPER
 
 parse_args() {
     NON_INTERACTIVE=false
-    GIT_URL=""
     SITE_NAME=""
     SITE_USER=""
     DEPLOY_DIR=""
-    GIT_BRANCH=""
     DOMAIN=""
     KONG_PORT=""
+    GCS_BUCKET="gs://velaair-website-artifacts"
     GCS_KEY_FILE=""
     CREATE_USER="yes"
     ADD_DOCKER_GROUP="no"
     SETUP_LOGROTATE="yes"
     SETUP_TIMER="yes"
-    GIT_SSH_KEY=""
-    SSH_KEY_FILE=""
 
     [[ $# -eq 0 ]] && return 0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --git-url)            GIT_URL="$2";            shift 2 ;;
-            --site-name)          SITE_NAME="$2";          shift 2 ;;
-            --site-user)          SITE_USER="$2";          shift 2 ;;
-            --deploy-dir)         DEPLOY_DIR="$2";         shift 2 ;;
-            --domain)             DOMAIN="$2";             shift 2 ;;
-            --git-branch)         GIT_BRANCH="$2";         shift 2 ;;
-            --kong-port)          KONG_PORT="$2";          shift 2 ;;
-            --gcs-key-file)       GCS_KEY_FILE="$2";       shift 2 ;;
-            --create-user)        CREATE_USER="$2";        shift 2 ;;
-            --setup-logrotate)    SETUP_LOGROTATE="$2";    shift 2 ;;
-            --setup-timer)        SETUP_TIMER="$2";        shift 2 ;;
-            --ssh-key-file)
-                [[ ! -f "$2" ]] && { log_error "SSH key file not found: $2"; exit 1; }
-                GIT_SSH_KEY=$(cat "$2")
-                SSH_KEY_FILE="$2"
-                shift 2 ;;
-            --non-interactive)    NON_INTERACTIVE=true;    shift ;;
+            --site-name)        SITE_NAME="$2";     shift 2 ;;
+            --site-user)        SITE_USER="$2";     shift 2 ;;
+            --deploy-dir)       DEPLOY_DIR="$2";    shift 2 ;;
+            --domain)           DOMAIN="$2";        shift 2 ;;
+            --kong-port)        KONG_PORT="$2";     shift 2 ;;
+            --gcs-bucket)       GCS_BUCKET="$2";    shift 2 ;;
+            --gcs-key-file)     GCS_KEY_FILE="$2";  shift 2 ;;
+            --create-user)      CREATE_USER="$2";   shift 2 ;;
+            --setup-logrotate)  SETUP_LOGROTATE="$2"; shift 2 ;;
+            --setup-timer)      SETUP_TIMER="$2";   shift 2 ;;
+            --non-interactive)  NON_INTERACTIVE=true; shift ;;
             --help|-h)
                 grep '^#   ' "$0" | sed 's/^#   //'
                 exit 0 ;;
@@ -245,12 +226,11 @@ parse_args() {
         esac
     done
 
-    # Auto non-interactive when required flags present
-    [[ -n "$GIT_URL" && -n "$SITE_NAME" ]] && NON_INTERACTIVE=true
+    [[ -n "$SITE_NAME" && -n "$GCS_KEY_FILE" ]] && NON_INTERACTIVE=true
 
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        [[ -z "$GIT_URL" ]]   && { log_error "--git-url required"; exit 1; }
-        [[ -z "$SITE_NAME" ]] && { log_error "--site-name required"; exit 1; }
+        [[ -z "$SITE_NAME" ]]    && { log_error "--site-name required";    exit 1; }
+        [[ -z "$GCS_KEY_FILE" ]] && { log_error "--gcs-key-file required"; exit 1; }
     fi
 }
 
@@ -260,14 +240,9 @@ gather_interactive() {
     log_info "Please provide the following information:"
     echo ""
 
-    while [[ -z "$GIT_URL" ]]; do
-        read -rp "Git repository URL: " GIT_URL
+    while [[ -z "$SITE_NAME" ]]; do
+        read -rp "Site name (alphanumeric + hyphens): " SITE_NAME
     done
-
-    local suggested
-    suggested=$(basename "$GIT_URL" .git | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]-')
-    read -rp "Site name [${suggested}]: " input
-    SITE_NAME="${input:-$suggested}"
 
     read -rp "System user for site [${SITE_NAME}]: " input
     SITE_USER="${input:-}"
@@ -276,9 +251,17 @@ gather_interactive() {
     read -rp "Deployment directory [${default_dir}]: " input
     DEPLOY_DIR="${input:-$default_dir}"
 
-    read -rp "Git branch (leave empty for default): " GIT_BRANCH
-
     read -rp "Site hostname for Traefik (e.g. example.com, optional): " DOMAIN
+
+    echo ""
+    log_info "GCS configuration:"
+    read -rp "GCS bucket URL [${GCS_BUCKET}]: " input
+    GCS_BUCKET="${input:-$GCS_BUCKET}"
+
+    while [[ -z "$GCS_KEY_FILE" || ! -f "$GCS_KEY_FILE" ]]; do
+        read -rp "Path to GCS service account JSON key file: " GCS_KEY_FILE
+        [[ -f "$GCS_KEY_FILE" ]] || log_warn "File not found: $GCS_KEY_FILE"
+    done
 
     echo ""
     log_info "User setup:"
@@ -292,11 +275,6 @@ gather_interactive() {
         read -rp "Add user to docker group anyway? [y/N]: " input
         [[ "${input,,}" == "y" ]] && ADD_DOCKER_GROUP="yes"
     fi
-
-    echo ""
-    log_info "GCS service account key (JSON file — used by update.sh to download artifacts):"
-    read -rp "Path to GCS service account JSON file: " input
-    GCS_KEY_FILE="${input:-}"
 }
 
 # ── Apply defaults ────────────────────────────────────────────────────────────
@@ -308,7 +286,6 @@ apply_defaults() {
     CREATE_USER="${CREATE_USER:-yes}"
     SETUP_LOGROTATE="${SETUP_LOGROTATE:-yes}"
     SETUP_TIMER="${SETUP_TIMER:-yes}"
-
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -321,10 +298,9 @@ main() {
     [[ "$NON_INTERACTIVE" != "true" ]] && gather_interactive
     apply_defaults
 
-    [[ -z "$SITE_NAME" ]] && { log_error "Site name is required"; exit 1; }
-    [[ -z "$GIT_URL" ]]   && { log_error "Git URL is required"; exit 1; }
-
-    local DEPLOY_DIR="${DEPLOY_DIR}"
+    [[ -z "$SITE_NAME" ]]    && { log_error "Site name is required";          exit 1; }
+    [[ -z "$GCS_KEY_FILE" ]] && { log_error "GCS service account key required"; exit 1; }
+    [[ -f "$GCS_KEY_FILE" ]] || { log_error "GCS key file not found: $GCS_KEY_FILE"; exit 1; }
 
     # Kong port
     local suggested_port
@@ -346,16 +322,14 @@ main() {
     log_info "Deployment plan:"
     log_info "════════════════════════════════════════════"
     printf "  %-20s %s\n" "Site name:"     "$SITE_NAME"
-    printf "  %-20s %s\n" "Git URL:"       "$GIT_URL"
-    printf "  %-20s %s\n" "Branch:"        "${GIT_BRANCH:-default}"
     printf "  %-20s %s\n" "Deploy dir:"    "$DEPLOY_DIR"
     printf "  %-20s %s\n" "System user:"   "$SITE_USER (nologin)"
-    printf "  %-20s %s\n" "Docker group:"  "$ADD_DOCKER_GROUP"
     printf "  %-20s %s\n" "Kong port:"     "$KONG_PORT"
     printf "  %-20s %s\n" "Domain:"        "${DOMAIN:-(not set)}"
-    printf "  %-20s %s\n" "GCS key:"       "${GCS_KEY_FILE:-(not provided)}"
+    printf "  %-20s %s\n" "GCS bucket:"    "$GCS_BUCKET"
+    printf "  %-20s %s\n" "GCS key:"       "$GCS_KEY_FILE"
     printf "  %-20s %s\n" "Logrotate:"     "$SETUP_LOGROTATE"
-    printf "  %-20s %s\n" "Updater timer:" "$SETUP_TIMER (15 min)"
+    printf "  %-20s %s\n" "Updater timer:" "$SETUP_TIMER (15 min ±5)"
     log_info "════════════════════════════════════════════"
     echo ""
 
@@ -366,327 +340,215 @@ main() {
 
     # ── Replay command ────────────────────────────────────────────────────────
     echo ""
-    log_note "Replay command (save this for disaster recovery):"
+    log_note "Replay command (save for disaster recovery):"
     echo ""
     printf "  sudo %s/deploy-site.sh \\\\\n" "$SCRIPT_DIR"
-    printf "    --git-url '%s' \\\\\n" "$GIT_URL"
     printf "    --site-name '%s' \\\\\n" "$SITE_NAME"
     [[ "$SITE_USER" != "$SITE_NAME" ]] && printf "    --site-user '%s' \\\\\n" "$SITE_USER"
     printf "    --deploy-dir '%s' \\\\\n" "$DEPLOY_DIR"
-    [[ -n "$GIT_BRANCH" ]]  && printf "    --git-branch '%s' \\\\\n" "$GIT_BRANCH"
     [[ -n "$DOMAIN" ]]      && printf "    --domain '%s' \\\\\n" "$DOMAIN"
     printf "    --kong-port '%s' \\\\\n" "$KONG_PORT"
-    [[ -n "$GCS_KEY_FILE" ]] && printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
+    printf "    --gcs-bucket '%s' \\\\\n" "$GCS_BUCKET"
+    printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
     printf "    --setup-timer '%s'\n" "$SETUP_TIMER"
     echo ""
 
     # ════════════════════════════════════════════════════════════════════════
     # STEP 1: User management
     # ════════════════════════════════════════════════════════════════════════
-    log_step "1/9  User management"
+    log_step "1/8  User management"
 
     if [[ "$CREATE_USER" == "yes" ]]; then
         if id "$SITE_USER" &>/dev/null; then
             log_info "User '$SITE_USER' already exists"
         else
-            # System user: no interactive login, home = deploy dir (for env purposes)
             useradd -r -M -d "$DEPLOY_DIR" -s /usr/sbin/nologin "$SITE_USER"
             log_info "Created system user: $SITE_USER (nologin)"
         fi
-
         if [[ "$ADD_DOCKER_GROUP" == "yes" ]]; then
             usermod -aG docker "$SITE_USER"
-            log_warn "Added $SITE_USER to docker group (grants root-equivalent container access)"
+            log_warn "Added $SITE_USER to docker group"
         fi
     else
         id "$SITE_USER" &>/dev/null \
-            || { log_error "User '$SITE_USER' does not exist (pass --create-user yes)"; exit 1; }
-        log_info "Using existing user: $SITE_USER"
+            || { log_error "User '$SITE_USER' does not exist"; exit 1; }
     fi
 
     # ════════════════════════════════════════════════════════════════════════
-    # STEP 2: Clone repository
+    # STEP 2: Authenticate to GCS + fetch channel metadata
     # ════════════════════════════════════════════════════════════════════════
-    log_step "2/9  Cloning repository → $DEPLOY_DIR"
+    log_step "2/8  Authenticating to GCS and fetching channel metadata"
 
-    if [[ -d "$DEPLOY_DIR/.git" ]]; then
-        log_warn "Repository already present at $DEPLOY_DIR"
-        if [[ "$NON_INTERACTIVE" != "true" ]]; then
-            read -rp "Remove and re-clone? [y/N]: " input
-            if [[ "${input,,}" == "y" ]]; then
-                rm -rf "$DEPLOY_DIR"
-            else
-                log_info "Reusing existing clone"
-            fi
-        fi
-    fi
+    export GOOGLE_APPLICATION_CREDENTIALS="${GCS_KEY_FILE}"
 
-    if [[ ! -d "$DEPLOY_DIR/.git" ]]; then
-        mkdir -p "$(dirname "$DEPLOY_DIR")"
+    log_info "Fetching ${GCS_BUCKET}/channels/prod-latest.json..."
+    CHANNEL_META="$(gsutil cat "${GCS_BUCKET}/channels/prod-latest.json")"
 
-        if [[ -n "$GIT_SSH_KEY" ]]; then
-            local tmp_key
-            tmp_key=$(mktemp)
-            printf '%s\n' "$GIT_SSH_KEY" > "$tmp_key"
-            chmod 600 "$tmp_key"
-            local clone_env="GIT_SSH_COMMAND='ssh -i ${tmp_key} -o StrictHostKeyChecking=accept-new'"
-            if [[ -n "$GIT_BRANCH" ]]; then
-                eval "$clone_env git clone -b '$GIT_BRANCH' '$GIT_URL' '$DEPLOY_DIR'"
-            else
-                eval "$clone_env git clone '$GIT_URL' '$DEPLOY_DIR'"
-            fi
-            rm -f "$tmp_key"
-        else
-            if [[ -n "$GIT_BRANCH" ]]; then
-                git clone -b "$GIT_BRANCH" "$GIT_URL" "$DEPLOY_DIR"
-            else
-                git clone "$GIT_URL" "$DEPLOY_DIR"
-            fi
-        fi
-        log_info "Repository cloned to $DEPLOY_DIR"
-    fi
+    INFRA_ARTIFACT="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin)['infra_artifact'])")"
+    FRONTEND_ARTIFACT="$(echo "${CHANNEL_META}"  | python3 -c "import json,sys; print(json.load(sys.stdin)['frontend_artifact'])")"
+    WORDPRESS_ARTIFACT="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['wordpress_artifact'])")"
+    INFRA_HASH="$(echo "${CHANNEL_META}"         | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_hash',''))")"
+    FRONTEND_HASH="$(echo "${CHANNEL_META}"      | python3 -c "import json,sys; print(json.load(sys.stdin)['frontend_git_hash'])")"
+    WORDPRESS_HASH="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin)['wordpress_git_hash'])")"
+
+    log_info "Channel metadata:"
+    log_info "  infra:     ${INFRA_ARTIFACT}"
+    log_info "  frontend:  ${FRONTEND_ARTIFACT}"
+    log_info "  wordpress: ${WORDPRESS_ARTIFACT}"
 
     # ════════════════════════════════════════════════════════════════════════
-    # STEP 3: Ownership + permissions
+    # STEP 3: Create deploy directory + download infra artifact
     # ════════════════════════════════════════════════════════════════════════
-    log_step "3/9  Ownership and permissions"
+    log_step "3/8  Deploy directory + infra artifact"
 
-    # Site user owns the project tree
-    chown -R "${SITE_USER}:${SITE_USER}" "$DEPLOY_DIR"
-    log_info "Ownership: ${SITE_USER}:${SITE_USER} → $DEPLOY_DIR"
-
-    # Sensitive subdirs: root-only (update.sh runs as root)
+    mkdir -p "${DEPLOY_DIR}"
     mkdir -p "${DEPLOY_DIR}/artifact-cache"
+    mkdir -p "${DEPLOY_DIR}/infra/secrets"
+
+    log_info "Downloading infra artifact from GCS..."
+    local infra_tmp
+    infra_tmp=$(mktemp /tmp/infra-XXXXXX.tar.gz.download)
+    gsutil cp "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}" "${infra_tmp}"
+
+    local decrypt_sh="/tmp/decrypt-bootstrap.sh"
+    # Bootstrap decrypt.sh from the bundle itself if not yet extracted
+    # (On first deploy infra/secrets doesn't exist yet — use null-key mode)
+    SKIP_ENCRYPTION=true bash <(tar -xzOf "${infra_tmp}" infra/artifact-crypto/decrypt.sh 2>/dev/null || true) \
+        --bundle "${infra_tmp}" --out-tar "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" 2>/dev/null \
+    || SKIP_ENCRYPTION=true gsutil cp "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}" \
+        "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}"
+
+    log_info "Extracting infra artifact to ${DEPLOY_DIR}..."
+    tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" -C "${DEPLOY_DIR}"
+    rm -f "${infra_tmp}"
+    log_info "Infra extracted"
+
+    # ════════════════════════════════════════════════════════════════════════
+    # STEP 4: Ownership + permissions
+    # ════════════════════════════════════════════════════════════════════════
+    log_step "4/8  Ownership and permissions"
+
+    chown -R "${SITE_USER}:${SITE_USER}" "$DEPLOY_DIR"
+
     chown root:root "${DEPLOY_DIR}/artifact-cache"
     chmod 755 "${DEPLOY_DIR}/artifact-cache"
-
-    mkdir -p "${DEPLOY_DIR}/infra/secrets"
     chown root:root "${DEPLOY_DIR}/infra/secrets"
     chmod 700 "${DEPLOY_DIR}/infra/secrets"
 
-    log_info "artifact-cache:  755 root:root"
-    log_info "infra/secrets:   700 root:root"
+    log_info "artifact-cache: 755 root:root"
+    log_info "infra/secrets:  700 root:root"
 
-    # Setup Docker sudo rules + network for the site user
     if [[ -f "$SCRIPT_DIR/scripts/setup-docker-permissions.sh" ]]; then
-        log_info "Setting up Docker sudoers for $SITE_USER..."
         bash "$SCRIPT_DIR/scripts/setup-docker-permissions.sh" "$SITE_USER" "$DEPLOY_DIR"
     fi
-
     if [[ -f "$SCRIPT_DIR/scripts/setup-docker-network.sh" ]]; then
         bash "$SCRIPT_DIR/scripts/setup-docker-network.sh" "$SITE_NAME"
     fi
 
-    # Log directory
     local log_dir="/var/log/${SITE_NAME}"
     mkdir -p "$log_dir"
     chown "${SITE_USER}:${SITE_USER}" "$log_dir"
-    log_info "Log dir: $log_dir"
 
     # ════════════════════════════════════════════════════════════════════════
-    # STEP 4: GCS service account key
+    # STEP 5: Provision GCS service account key
     # ════════════════════════════════════════════════════════════════════════
-    log_step "4/9  GCS service account key"
+    log_step "5/8  GCS service account key"
 
     local gcs_dest="${DEPLOY_DIR}/infra/secrets/gcs_service_account.json"
-    if [[ -n "$GCS_KEY_FILE" && -f "$GCS_KEY_FILE" ]]; then
-        cp "$GCS_KEY_FILE" "$gcs_dest"
-        chmod 600 "$gcs_dest"
-        chown root:root "$gcs_dest"
-        log_info "GCS key saved → infra/secrets/gcs_service_account.json"
-    elif [[ -f "$gcs_dest" ]]; then
-        log_info "Existing GCS key found at $gcs_dest"
-    else
-        log_warn "No GCS key — skipping (update.sh will fail until the key is added)"
-        log_note "Add it later: cp /path/to/key.json ${gcs_dest} && chmod 600 ${gcs_dest}"
-    fi
+    cp "$GCS_KEY_FILE" "$gcs_dest"
+    chmod 600 "$gcs_dest"
+    chown root:root "$gcs_dest"
+    log_info "GCS key → infra/secrets/gcs_service_account.json"
 
     # ════════════════════════════════════════════════════════════════════════
-    # STEP 5: .env setup
+    # STEP 6: .env setup + download frontend/wordpress artifacts
     # ════════════════════════════════════════════════════════════════════════
-    log_step "5/9  Environment (.env)"
+    log_step "6/8  Environment (.env) + artifact download"
 
     local env_file="${DEPLOY_DIR}/.env"
-    if [[ ! -f "$env_file" ]]; then
-        if [[ -f "${DEPLOY_DIR}/.env_template_prod" ]]; then
-            cp "${DEPLOY_DIR}/.env_template_prod" "$env_file"
-            log_info "Created .env from .env_template_prod"
-        elif [[ -f "${DEPLOY_DIR}/.env_template" ]]; then
-            cp "${DEPLOY_DIR}/.env_template" "$env_file"
-            log_info "Created .env from .env_template"
-        else
-            touch "$env_file"
-            log_info "Created empty .env"
-        fi
-    else
-        log_info ".env already exists"
-    fi
+    [[ ! -f "$env_file" ]] && touch "$env_file"
 
-    # Inject / update known values
-    [[ -n "$KONG_PORT" ]] && _env_set "KONG_HTTPS_PORT" "$KONG_PORT" "$env_file"
-    [[ -n "$DOMAIN" ]]    && _env_set "SITE_HOSTNAME"   "$DOMAIN"    "$env_file"
+    _env_set "KONG_HTTPS_PORT"    "$KONG_PORT"          "$env_file"
+    [[ -n "$DOMAIN" ]] && _env_set "SITE_HOSTNAME" "$DOMAIN"    "$env_file"
+    _env_set "INFRA_HASH"         "$INFRA_HASH"         "$env_file"
+    _env_set "INFRA_ARTIFACT"     "./artifact-cache/${INFRA_ARTIFACT}"  "$env_file"
+    _env_set "FRONTEND_GIT_HASH"  "$FRONTEND_HASH"      "$env_file"
+    _env_set "WORDPRESS_GIT_HASH" "$WORDPRESS_HASH"     "$env_file"
 
     chmod 600 "$env_file"
     chown root:root "$env_file"
-    log_info ".env written (600 root:root)"
 
-    # ════════════════════════════════════════════════════════════════════════
-    # STEP 6: Test pull + encryption detection
-    # ════════════════════════════════════════════════════════════════════════
-    log_step "6/9  Test pull (GCS access + encryption detection)"
+    log_info "Downloading frontend artifact..."
+    gsutil cp "${GCS_BUCKET}/artifacts/${FRONTEND_ARTIFACT}" \
+        "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download"
+    decrypt_artifact \
+        "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download" \
+        "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}" \
+        "${DEPLOY_DIR}/infra/artifact-crypto/decrypt.sh" \
+        "${DEPLOY_DIR}/infra/secrets"
+    rm -f "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download"
+    _env_set "FRONTEND_ARTIFACT" "./artifact-cache/${FRONTEND_ARTIFACT}" "$env_file"
 
-    local update_sh="${DEPLOY_DIR}/infra/bootstrap/update.sh"
-    local artifact_cache="${DEPLOY_DIR}/artifact-cache"
+    log_info "Downloading wordpress artifact..."
+    gsutil cp "${GCS_BUCKET}/artifacts/${WORDPRESS_ARTIFACT}" \
+        "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download"
+    decrypt_artifact \
+        "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download" \
+        "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}" \
+        "${DEPLOY_DIR}/infra/artifact-crypto/decrypt.sh" \
+        "${DEPLOY_DIR}/infra/secrets"
+    rm -f "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download"
+    _env_set "WORDPRESS_ARTIFACT" "./artifact-cache/${WORDPRESS_ARTIFACT}" "$env_file"
 
-    if [[ ! -f "$update_sh" ]]; then
-        log_warn "update.sh not found at $update_sh — skipping test pull"
-    elif [[ ! -f "${DEPLOY_DIR}/infra/secrets/gcs_service_account.json" ]]; then
-        log_warn "No GCS key available — skipping test pull"
-    else
-        log_info "Running: update.sh --pull-only"
-        if (cd "$DEPLOY_DIR" && bash "$update_sh" --pull-only); then
-            log_info "Test pull succeeded"
-        else
-            log_warn "Test pull failed — check GCS key permissions"
-            if [[ "$NON_INTERACTIVE" != "true" ]]; then
-                read -rp "Continue anyway? [y/N]: " input
-                [[ "${input,,}" != "y" ]] && { log_error "Deployment aborted"; exit 1; }
-            fi
-        fi
-
-        # Detect encryption from a content-addressed bundle (not the staged frontend.tar.gz)
-        local sample_bundle
-        sample_bundle=$(find "$artifact_cache" -maxdepth 1 -name "*-*.tar.gz" 2>/dev/null | head -1 || true)
-
-        if [[ -z "$sample_bundle" ]]; then
-            log_note "No bundles found in artifact-cache — encryption mode unknown"
-        elif artifact_is_encrypted "$sample_bundle"; then
-            echo ""
-            log_warn "Artifact is ENCRYPTED (payload.enc detected inside bundle)"
-            log_info "Provisioning encryption keys for ${SITE_NAME}..."
-            echo ""
-
-            local pub_key_file="${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-            local aes_key_file="${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-
-            if [[ ! -f "$pub_key_file" ]]; then
-                echo "  Paste RSA-4096 signing public key (PEM format, Ctrl+D when done):"
-                local pub_key
-                pub_key=$(cat)
-                if [[ -n "$pub_key" ]]; then
-                    printf '%s\n' "$pub_key" > "$pub_key_file"
-                    chmod 600 "$pub_key_file"
-                    chown root:root "$pub_key_file"
-                    log_info "Signing public key saved"
-                else
-                    log_warn "No public key provided — artifact decryption will fail at startup"
-                fi
-            else
-                log_info "Signing public key already present"
-            fi
-
-            if [[ ! -f "$aes_key_file" ]]; then
-                read -rsp "  AES-256 key (base64-encoded, input hidden): " AES_KEY
-                echo ""
-                if [[ -n "$AES_KEY" ]]; then
-                    printf '%s' "$AES_KEY" > "$aes_key_file"
-                    chmod 600 "$aes_key_file"
-                    chown root:root "$aes_key_file"
-                    log_info "AES key saved"
-                else
-                    log_warn "No AES key provided — artifact decryption will fail at startup"
-                fi
-            else
-                log_info "AES key already present"
-            fi
-
-            # Verify with decrypt.sh --dry-run if both keys are available
-            local decrypt_sh="${DEPLOY_DIR}/infra/artifact-crypto/decrypt.sh"
-            if [[ -f "$decrypt_sh" && -f "$pub_key_file" && -f "$aes_key_file" ]]; then
-                log_info "Verifying keys with decrypt.sh --dry-run..."
-                if ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "$pub_key_file")" \
-                   ARTIFACT_AES_KEY="$(cat "$aes_key_file")" \
-                   SKIP_ENCRYPTION=false \
-                   bash "$decrypt_sh" --bundle "$sample_bundle" --dry-run; then
-                    log_info "Key verification passed"
-                else
-                    log_warn "Key verification FAILED — check the keys are for this repo"
-                fi
-            fi
-        else
-            log_info "Artifact is unencrypted (null-key mode) — no crypto keys needed"
-        fi
-    fi
+    log_info "All artifacts downloaded"
 
     # ════════════════════════════════════════════════════════════════════════
     # STEP 7: Traefik routing
     # ════════════════════════════════════════════════════════════════════════
-    log_step "7/9  Traefik routing"
+    log_step "7/8  Traefik routing"
 
-    local traefik_domain="${DOMAIN:-$(_env_get "SITE_HOSTNAME" "$env_file")}"
     local traefik_script="$SCRIPT_DIR/scripts/add-traefik-site.sh"
-    local traefik_cmd="sudo ${traefik_script} ${traefik_domain:-<domain>} ${KONG_PORT}"
-
-    echo ""
-    if [[ -n "$traefik_domain" ]]; then
+    if [[ -n "$DOMAIN" ]]; then
+        local traefik_cmd="sudo ${traefik_script} ${DOMAIN} ${KONG_PORT} ${SITE_NAME}"
         log_info "Suggested Traefik command:"
         echo ""
         echo "    $traefik_cmd"
         echo ""
         if [[ "$NON_INTERACTIVE" != "true" ]]; then
-            read -rp "  [Y] Run now  [e] Edit domain/port  [n] Skip  [Y/e/n]: " input
+            read -rp "  [Y] Run now  [e] Edit  [n] Skip  [Y/e/n]: " input
             case "${input,,}" in
                 ""|y)
-                    if [[ -f "$traefik_script" ]]; then
-                        bash "$traefik_script" "$traefik_domain" "$KONG_PORT" "$SITE_NAME"
-                    else
-                        log_warn "add-traefik-site.sh not found at $traefik_script"
-                    fi
+                    [[ -f "$traefik_script" ]] && bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME" \
+                        || log_warn "add-traefik-site.sh not found"
                     ;;
                 e)
-                    read -rp "  Domain [${traefik_domain}]: " ed
-                    traefik_domain="${ed:-$traefik_domain}"
-                    read -rp "  Port   [${KONG_PORT}]: " ep
-                    local edit_port="${ep:-$KONG_PORT}"
-                    if [[ -f "$traefik_script" ]]; then
-                        bash "$traefik_script" "$traefik_domain" "$edit_port" "$SITE_NAME"
-                    fi
+                    read -rp "  Domain [${DOMAIN}]: " ed; DOMAIN="${ed:-$DOMAIN}"
+                    read -rp "  Port   [${KONG_PORT}]: " ep; KONG_PORT="${ep:-$KONG_PORT}"
+                    [[ -f "$traefik_script" ]] && bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME"
                     ;;
-                n)
-                    log_note "Skipping Traefik — run manually when ready:"
-                    echo "    $traefik_cmd"
-                    ;;
+                n) log_note "Skipping Traefik — run manually: $traefik_cmd" ;;
             esac
         else
             log_note "Non-interactive: run Traefik manually: $traefik_cmd"
         fi
     else
         log_note "No domain set — Traefik routing skipped"
-        log_note "Run later: sudo ${traefik_script} <domain> ${KONG_PORT}"
     fi
 
     # ════════════════════════════════════════════════════════════════════════
-    # STEP 8: Log rotation
+    # STEP 8: Log rotation + systemd updater timer
     # ════════════════════════════════════════════════════════════════════════
-    log_step "8/9  Log rotation"
+    log_step "8/8  Log rotation + systemd updater timer"
+
     if [[ "$SETUP_LOGROTATE" == "yes" && -f "$SCRIPT_DIR/scripts/setup-logrotate.sh" ]]; then
         bash "$SCRIPT_DIR/scripts/setup-logrotate.sh" "$SITE_NAME" "$DEPLOY_DIR"
-    else
-        log_info "Skipped"
     fi
-
-    # ════════════════════════════════════════════════════════════════════════
-    # STEP 9: Systemd updater timer
-    # ════════════════════════════════════════════════════════════════════════
-    log_step "9/9  Systemd updater timer"
 
     if [[ "$SETUP_TIMER" == "yes" ]]; then
         install_updater_timer "$SITE_NAME" "$DEPLOY_DIR"
         add_update_now_sudoers "$SITE_USER" "$SITE_NAME" || true
         create_update_now_helper "$SITE_NAME" "${DEPLOY_DIR}/bin" "$SITE_USER"
-        log_info "Immediate check helper: ${DEPLOY_DIR}/bin/update-now"
-    else
-        log_info "Skipped (--setup-timer no)"
+        log_info "Immediate check: ${DEPLOY_DIR}/bin/update-now"
     fi
 
     # ════════════════════════════════════════════════════════════════════════
@@ -700,16 +562,14 @@ main() {
     printf "  %-20s %s\n" "Site:" "$SITE_NAME"
     printf "  %-20s %s\n" "Directory:" "$DEPLOY_DIR"
     printf "  %-20s %s\n" "System user:" "$SITE_USER (nologin)"
-    [[ -n "$traefik_domain" ]] && printf "  %-20s %s\n" "Domain:" "$traefik_domain"
+    [[ -n "$DOMAIN" ]] && printf "  %-20s %s\n" "Domain:" "$DOMAIN"
     printf "  %-20s %s\n" "Kong port:" "$KONG_PORT"
     echo ""
     log_info "Next steps:"
-    echo "  1. Review .env:        ${DEPLOY_DIR}/.env"
-    echo "  2. Start stack:        cd ${DEPLOY_DIR} && sudo docker compose up -d"
-    if [[ "$SETUP_TIMER" == "yes" ]]; then
-        echo "  3. Check for updates:  ${DEPLOY_DIR}/bin/update-now"
-        echo "     Watch update logs:  journalctl -fu ${SITE_NAME}-updater.service"
-    fi
+    echo "  1. Review .env:      ${DEPLOY_DIR}/.env"
+    echo "  2. Start stack:      cd ${DEPLOY_DIR} && docker compose up -d"
+    [[ "$SETUP_TIMER" == "yes" ]] && \
+    echo "  3. Check updates:    ${DEPLOY_DIR}/bin/update-now"
     echo ""
 }
 
