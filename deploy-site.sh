@@ -22,8 +22,7 @@
 #   --domain <hostname>          Site hostname for Traefik routing
 #   --git-branch <branch>        Git branch (optional, defaults to repo default)
 #   --kong-port <port>           Kong internal HTTPS port (default: auto-detect from 8443)
-#   --github-token-file <path>   File containing the GitHub token
-#   --github-repo <owner/repo>   GitHub repository slug (default: inferred from git URL)
+#   --gcs-key-file <path>        Path to GCS service account JSON key file
 #   --create-user <yes|no>       Create dedicated system user (default: yes)
 #   --setup-logrotate <yes|no>   Set up log rotation (default: yes)
 #   --setup-timer <yes|no>       Install systemd updater timer (default: yes)
@@ -207,9 +206,7 @@ parse_args() {
     GIT_BRANCH=""
     DOMAIN=""
     KONG_PORT=""
-    GITHUB_TOKEN=""
-    GITHUB_TOKEN_FILE=""
-    GITHUB_REPO=""
+    GCS_KEY_FILE=""
     CREATE_USER="yes"
     ADD_DOCKER_GROUP="no"
     SETUP_LOGROTATE="yes"
@@ -228,8 +225,7 @@ parse_args() {
             --domain)             DOMAIN="$2";             shift 2 ;;
             --git-branch)         GIT_BRANCH="$2";         shift 2 ;;
             --kong-port)          KONG_PORT="$2";          shift 2 ;;
-            --github-token-file)  GITHUB_TOKEN_FILE="$2";  shift 2 ;;
-            --github-repo)        GITHUB_REPO="$2";        shift 2 ;;
+            --gcs-key-file)       GCS_KEY_FILE="$2";       shift 2 ;;
             --create-user)        CREATE_USER="$2";        shift 2 ;;
             --setup-logrotate)    SETUP_LOGROTATE="$2";    shift 2 ;;
             --setup-timer)        SETUP_TIMER="$2";        shift 2 ;;
@@ -298,21 +294,9 @@ gather_interactive() {
     fi
 
     echo ""
-    log_info "GitHub token (classic, needs 'repo' scope for private repositories):"
-    if [[ -n "$GITHUB_TOKEN_FILE" ]]; then
-        log_info "Using token file: $GITHUB_TOKEN_FILE"
-    else
-        read -rsp "Paste GitHub token (input hidden, press Enter): " GITHUB_TOKEN
-        echo ""
-    fi
-
-    echo ""
-    log_info "SSH key for Git (only needed for private repos over SSH, not HTTPS):"
-    read -rp "Provide SSH private key for cloning? [y/N]: " input
-    if [[ "${input,,}" == "y" ]]; then
-        echo "Paste SSH private key (Ctrl+D when done):"
-        GIT_SSH_KEY=$(cat)
-    fi
+    log_info "GCS service account key (JSON file — used by update.sh to download artifacts):"
+    read -rp "Path to GCS service account JSON file: " input
+    GCS_KEY_FILE="${input:-}"
 }
 
 # ── Apply defaults ────────────────────────────────────────────────────────────
@@ -325,15 +309,6 @@ apply_defaults() {
     SETUP_LOGROTATE="${SETUP_LOGROTATE:-yes}"
     SETUP_TIMER="${SETUP_TIMER:-yes}"
 
-    if [[ -n "$GITHUB_TOKEN_FILE" && -f "$GITHUB_TOKEN_FILE" ]]; then
-        GITHUB_TOKEN=$(cat "$GITHUB_TOKEN_FILE")
-    fi
-
-    if [[ -z "$GITHUB_REPO" ]]; then
-        local inferred
-        inferred=$(infer_github_repo "$GIT_URL")
-        [[ "$inferred" != "$GIT_URL" ]] && GITHUB_REPO="$inferred"
-    fi
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -378,8 +353,7 @@ main() {
     printf "  %-20s %s\n" "Docker group:"  "$ADD_DOCKER_GROUP"
     printf "  %-20s %s\n" "Kong port:"     "$KONG_PORT"
     printf "  %-20s %s\n" "Domain:"        "${DOMAIN:-(not set)}"
-    printf "  %-20s %s\n" "GitHub repo:"   "${GITHUB_REPO:-(infer from .env_template_prod)}"
-    printf "  %-20s %s\n" "GitHub token:"  "$([ -n "$GITHUB_TOKEN" ] && echo "provided" || echo "not provided")"
+    printf "  %-20s %s\n" "GCS key:"       "${GCS_KEY_FILE:-(not provided)}"
     printf "  %-20s %s\n" "Logrotate:"     "$SETUP_LOGROTATE"
     printf "  %-20s %s\n" "Updater timer:" "$SETUP_TIMER (15 min)"
     log_info "════════════════════════════════════════════"
@@ -402,8 +376,7 @@ main() {
     [[ -n "$GIT_BRANCH" ]]  && printf "    --git-branch '%s' \\\\\n" "$GIT_BRANCH"
     [[ -n "$DOMAIN" ]]      && printf "    --domain '%s' \\\\\n" "$DOMAIN"
     printf "    --kong-port '%s' \\\\\n" "$KONG_PORT"
-    [[ -n "$GITHUB_REPO" ]] && printf "    --github-repo '%s' \\\\\n" "$GITHUB_REPO"
-    [[ -n "$SSH_KEY_FILE" ]] && printf "    --ssh-key-file '%s' \\\\\n" "$SSH_KEY_FILE"
+    [[ -n "$GCS_KEY_FILE" ]] && printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
     printf "    --setup-timer '%s'\n" "$SETUP_TIMER"
     echo ""
 
@@ -511,22 +484,21 @@ main() {
     log_info "Log dir: $log_dir"
 
     # ════════════════════════════════════════════════════════════════════════
-    # STEP 4: GitHub token
+    # STEP 4: GCS service account key
     # ════════════════════════════════════════════════════════════════════════
-    log_step "4/9  GitHub token"
+    log_step "4/9  GCS service account key"
 
-    local token_file="${DEPLOY_DIR}/infra/secrets/github_token.txt"
-    if [[ -n "$GITHUB_TOKEN" ]]; then
-        printf '%s' "$GITHUB_TOKEN" > "$token_file"
-        chmod 600 "$token_file"
-        chown root:root "$token_file"
-        log_info "Token saved → infra/secrets/github_token.txt"
-    elif [[ -f "$token_file" ]]; then
-        GITHUB_TOKEN=$(cat "$token_file")
-        log_info "Existing token found at $token_file"
+    local gcs_dest="${DEPLOY_DIR}/infra/secrets/gcs_service_account.json"
+    if [[ -n "$GCS_KEY_FILE" && -f "$GCS_KEY_FILE" ]]; then
+        cp "$GCS_KEY_FILE" "$gcs_dest"
+        chmod 600 "$gcs_dest"
+        chown root:root "$gcs_dest"
+        log_info "GCS key saved → infra/secrets/gcs_service_account.json"
+    elif [[ -f "$gcs_dest" ]]; then
+        log_info "Existing GCS key found at $gcs_dest"
     else
-        log_warn "No GitHub token — skipping (update.sh will fail until a token is added)"
-        log_note "Add it later: echo 'ghp_...' > ${token_file} && chmod 600 ${token_file}"
+        log_warn "No GCS key — skipping (update.sh will fail until the key is added)"
+        log_note "Add it later: cp /path/to/key.json ${gcs_dest} && chmod 600 ${gcs_dest}"
     fi
 
     # ════════════════════════════════════════════════════════════════════════
@@ -551,12 +523,8 @@ main() {
     fi
 
     # Inject / update known values
-    [[ -n "$GITHUB_REPO" ]] && _env_set "GITHUB_REPO"    "$GITHUB_REPO"  "$env_file"
-    [[ -n "$KONG_PORT" ]]   && _env_set "KONG_HTTPS_PORT" "$KONG_PORT"   "$env_file"
-    [[ -n "$DOMAIN" ]]      && _env_set "SITE_HOSTNAME"   "$DOMAIN"      "$env_file"
-
-    # Pull back GITHUB_REPO in case it came from the template
-    [[ -z "$GITHUB_REPO" ]] && GITHUB_REPO=$(_env_get "GITHUB_REPO" "$env_file")
+    [[ -n "$KONG_PORT" ]] && _env_set "KONG_HTTPS_PORT" "$KONG_PORT" "$env_file"
+    [[ -n "$DOMAIN" ]]    && _env_set "SITE_HOSTNAME"   "$DOMAIN"    "$env_file"
 
     chmod 600 "$env_file"
     chown root:root "$env_file"
@@ -565,21 +533,21 @@ main() {
     # ════════════════════════════════════════════════════════════════════════
     # STEP 6: Test pull + encryption detection
     # ════════════════════════════════════════════════════════════════════════
-    log_step "6/9  Test pull (GitHub access + encryption detection)"
+    log_step "6/9  Test pull (GCS access + encryption detection)"
 
     local update_sh="${DEPLOY_DIR}/infra/bootstrap/update.sh"
     local artifact_cache="${DEPLOY_DIR}/artifact-cache"
 
     if [[ ! -f "$update_sh" ]]; then
         log_warn "update.sh not found at $update_sh — skipping test pull"
-    elif [[ -z "$GITHUB_TOKEN" ]]; then
-        log_warn "No GitHub token available — skipping test pull"
+    elif [[ ! -f "${DEPLOY_DIR}/infra/secrets/gcs_service_account.json" ]]; then
+        log_warn "No GCS key available — skipping test pull"
     else
         log_info "Running: update.sh --pull-only"
         if (cd "$DEPLOY_DIR" && bash "$update_sh" --pull-only); then
             log_info "Test pull succeeded"
         else
-            log_warn "Test pull failed — check token permissions and GITHUB_REPO in .env"
+            log_warn "Test pull failed — check GCS key permissions"
             if [[ "$NON_INTERACTIVE" != "true" ]]; then
                 read -rp "Continue anyway? [y/N]: " input
                 [[ "${input,,}" != "y" ]] && { log_error "Deployment aborted"; exit 1; }
