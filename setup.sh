@@ -291,6 +291,13 @@ run_full_setup() {
         bash "$DOCKERHOSTING_DIR/scripts/install-docker.sh" $(_flag docker)
     fi
 
+    # Install Google Cloud CLI (gsutil — needed by deploy-site.sh and site update.sh)
+    if [ -f "$DOCKERHOSTING_DIR/scripts/install-gcloud.sh" ]; then
+        log_info "Installing Google Cloud CLI..."
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/install-gcloud.sh" $(_flag gcloud)
+    fi
+
     # Install Traefik as boundary proxy
     if [ -f "$DOCKERHOSTING_DIR/scripts/install-traefik.sh" ]; then
         log_info "Installing Traefik boundary proxy..."
@@ -464,6 +471,17 @@ run_full_setup() {
 main() {
     display_banner
     check_root
+
+    # --update: pull the repo and exit without running full setup
+    for arg in "$@"; do
+        if [[ "$arg" == "--update" ]]; then
+            log_info "Update mode: pulling latest repository..."
+            clone_repository
+            log_info "Repository is up to date."
+            exit 0
+        fi
+    done
+
     check_os
 
     log_info "Starting server setup..."
