@@ -266,15 +266,16 @@ gather_interactive() {
     echo ""
     log_info "User setup:"
     read -rp "Create system user '${SITE_USER:-$SITE_NAME}' with nologin shell? [Y/n]: " input
-    [[ "${input,,}" == "n" ]] && CREATE_USER="no"
+    if [[ "${input,,}" == "n" ]]; then CREATE_USER="no"; fi
 
     if [[ "$CREATE_USER" == "yes" ]]; then
         echo ""
         log_warn "The docker group grants root-equivalent container access."
         log_note "Sudoers-based restricted access will be set up instead (recommended)."
         read -rp "Add user to docker group anyway? [y/N]: " input
-        [[ "${input,,}" == "y" ]] && ADD_DOCKER_GROUP="yes"
+        if [[ "${input,,}" == "y" ]]; then ADD_DOCKER_GROUP="yes"; fi
     fi
+    return 0
 }
 
 # ── Apply defaults ────────────────────────────────────────────────────────────
