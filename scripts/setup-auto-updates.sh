@@ -32,8 +32,9 @@ fi
 
 # Backup original configuration if exists
 if [ -f /etc/apt/apt.conf.d/50unattended-upgrades ]; then
-    cp /etc/apt/apt.conf.d/50unattended-upgrades "/etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d)"
-    echo "[INFO] Backed up existing configuration"
+    mkdir -p /etc/apt/backups
+    cp /etc/apt/apt.conf.d/50unattended-upgrades "/etc/apt/backups/50unattended-upgrades.$(date +%Y%m%d)"
+    echo "[INFO] Backed up existing configuration to /etc/apt/backups/"
 fi
 
 # Configure unattended-upgrades

@@ -20,7 +20,7 @@ echo "[INFO] Configuring NTP time synchronisation (chrony)..."
 FORCE=false
 for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
 
-if [[ "$FORCE" == false ]] && command -v chronyc &>/dev/null && systemctl is-active --quiet chronyd 2>/dev/null; then
+if [[ "$FORCE" == false ]] && command -v chronyc &>/dev/null && systemctl is-active --quiet chrony 2>/dev/null; then
     echo "[INFO] chrony already running — skipping (use --force to reconfigure)"
     chronyc tracking | head -5
     exit 0
@@ -89,19 +89,21 @@ EOF
 echo "[INFO] Wrote /etc/chrony/chrony.conf"
 
 # Enable and start chrony
-systemctl enable chronyd
-systemctl restart chronyd
+# Use the canonical unit name (chrony.service) — chronyd.service is a symlink
+# alias on Debian and systemctl enable refuses to operate on linked unit files
+systemctl enable chrony
+systemctl restart chrony
 
 # Wait briefly for initial sync
 sleep 2
 
 # Verify service state
-if systemctl is-active --quiet chronyd; then
-    echo "[INFO] chronyd is running"
+if systemctl is-active --quiet chrony; then
+    echo "[INFO] chrony is running"
     chronyc tracking | head -8 || true
 else
-    echo "[ERROR] chronyd failed to start"
-    journalctl -xeu chronyd --no-pager -n 20
+    echo "[ERROR] chrony failed to start"
+    journalctl -xeu chrony --no-pager -n 20
     exit 1
 fi
 
