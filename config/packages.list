@@ -57,3 +57,4 @@ default-mysql-client
 
 # Python (system base only - no development tools)
 python3
+python3-cryptography

@@ -28,6 +28,8 @@
 #   --setup-logrotate <yes|no> Set up log rotation (default: yes)
 #   --setup-timer <yes|no>   Install systemd updater timer (default: yes)
 #   --non-interactive        Skip all prompts (requires --site-name and --gcs-key-file)
+#   --artifact-aes-key-file <path>          AES-256 key file for artifact decryption (base64)
+#   --artifact-signing-pub-key-file <path>  RSA public key file for artifact verification (PEM)
 
 set -euo pipefail
 
@@ -252,6 +254,8 @@ parse_args() {
     KONG_PORT=""
     GCS_BUCKET="gs://velaair-website-artifacts"
     GCS_KEY_FILE=""
+    ARTIFACT_AES_KEY_FILE=""
+    ARTIFACT_SIGNING_PUB_KEY_FILE=""
     CREATE_USER="yes"
     ADD_DOCKER_GROUP="no"
     SETUP_LOGROTATE="yes"
@@ -268,6 +272,8 @@ parse_args() {
             --kong-port)        KONG_PORT="$2";     shift 2 ;;
             --gcs-bucket)       GCS_BUCKET="$2";    shift 2 ;;
             --gcs-key-file)     GCS_KEY_FILE="$2";  shift 2 ;;
+            --artifact-aes-key-file)         ARTIFACT_AES_KEY_FILE="$2";         shift 2 ;;
+            --artifact-signing-pub-key-file) ARTIFACT_SIGNING_PUB_KEY_FILE="$2"; shift 2 ;;
             --create-user)      CREATE_USER="$2";   shift 2 ;;
             --setup-logrotate)  SETUP_LOGROTATE="$2"; shift 2 ;;
             --setup-timer)      SETUP_TIMER="$2";   shift 2 ;;
@@ -409,6 +415,8 @@ main() {
     printf "    --kong-port '%s' \\\\\n" "$KONG_PORT"
     printf "    --gcs-bucket '%s' \\\\\n" "$GCS_BUCKET"
     printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
+    if [[ -n "$ARTIFACT_AES_KEY_FILE" ]]; then printf "    --artifact-aes-key-file '%s' \\\\\n" "$ARTIFACT_AES_KEY_FILE"; fi
+    if [[ -n "$ARTIFACT_SIGNING_PUB_KEY_FILE" ]]; then printf "    --artifact-signing-pub-key-file '%s' \\\\\n" "$ARTIFACT_SIGNING_PUB_KEY_FILE"; fi
     printf "    --setup-timer '%s'\n" "$SETUP_TIMER"
     echo ""
 
@@ -477,15 +485,32 @@ main() {
         -o "${infra_tmp}" \
         "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}")"
 
-    local decrypt_sh="/tmp/decrypt-bootstrap.sh"
-    # Bootstrap decrypt.sh from the bundle itself if not yet extracted
-    # (On first deploy infra/secrets doesn't exist yet — use null-key mode)
-    SKIP_ENCRYPTION=true bash <(tar -xzOf "${infra_tmp}" infra/artifact-crypto/decrypt.sh 2>/dev/null || true) \
-        --bundle "${infra_tmp}" --out-tar "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" 2>/dev/null \
-    || curl -fsSL --retry 3 --retry-delay 5 \
-        -H "Authorization: Bearer ${GCS_TOKEN}" \
-        -o "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" \
-        "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}")"
+    local decrypt_bootstrap="${SCRIPT_DIR}/lib/decrypt.sh"
+    [[ -f "${decrypt_bootstrap}" ]] || { log_error "Bundled decrypt.sh missing: ${decrypt_bootstrap}"; exit 1; }
+
+    if artifact_is_encrypted "${infra_tmp}"; then
+        if [[ -z "${ARTIFACT_AES_KEY_FILE}" || ! -f "${ARTIFACT_AES_KEY_FILE}" || \
+              -z "${ARTIFACT_SIGNING_PUB_KEY_FILE}" || ! -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
+            log_error "Infra artifact is encrypted but no decryption keys were provided."
+            log_error "Re-run with:"
+            log_error "  --artifact-aes-key-file <path>          (base64 AES-256 key)"
+            log_error "  --artifact-signing-pub-key-file <path>  (PEM RSA public key)"
+            rm -f "${infra_tmp}"
+            exit 1
+        fi
+        log_info "Decrypting infra artifact..."
+        ARTIFACT_AES_KEY="$(cat "${ARTIFACT_AES_KEY_FILE}")" \
+        ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${ARTIFACT_SIGNING_PUB_KEY_FILE}")" \
+        SKIP_ENCRYPTION=false \
+        bash "${decrypt_bootstrap}" \
+            --bundle "${infra_tmp}" \
+            --out-tar "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}"
+    else
+        log_info "Staging unencrypted infra artifact..."
+        SKIP_ENCRYPTION=true bash "${decrypt_bootstrap}" \
+            --bundle "${infra_tmp}" \
+            --out-tar "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}"
+    fi
 
     log_info "Extracting infra artifact to ${DEPLOY_DIR}..."
     tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" -C "${DEPLOY_DIR}"
@@ -528,6 +553,19 @@ main() {
     chmod 600 "$gcs_dest"
     chown root:root "$gcs_dest"
     log_info "GCS key → infra/secrets/gcs_service_account.json"
+
+    if [[ -n "${ARTIFACT_AES_KEY_FILE}" && -f "${ARTIFACT_AES_KEY_FILE}" ]]; then
+        cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
+        chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
+        chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
+        log_info "AES key      → infra/secrets/artifact_aes_key.txt"
+    fi
+    if [[ -n "${ARTIFACT_SIGNING_PUB_KEY_FILE}" && -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
+        cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+        chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+        chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+        log_info "Signing key  → infra/secrets/artifact_signing_public_key.pem"
+    fi
 
     # ════════════════════════════════════════════════════════════════════════
     # STEP 6: .env setup + download frontend/wordpress artifacts
