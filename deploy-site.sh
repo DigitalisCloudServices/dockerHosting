@@ -26,6 +26,7 @@
 #   --non-interactive        Skip all prompts
 #   --gcs-bucket <url>       GCS bucket URL (default: gs://velaair-website-artifacts) [production only]
 #   --gcs-key-file <path>    Path to GCS service account JSON key file [production only, required]
+#   --ar-registry <host>     Artifact Registry hostname (default: europe-west2-docker.pkg.dev) [production only]
 #   --artifact-aes-key-file <path>          AES-256 key file for artifact decryption (base64) [production only]
 #   --artifact-signing-pub-key-file <path>  RSA public key file for artifact verification (PEM) [production only]
 
@@ -253,6 +254,7 @@ parse_args() {
     KONG_PORT=""
     GCS_BUCKET="gs://velaair-website-artifacts"
     GCS_KEY_FILE=""
+    AR_REGISTRY="europe-west2-docker.pkg.dev"
     ARTIFACT_AES_KEY_FILE=""
     ARTIFACT_SIGNING_PUB_KEY_FILE=""
     CREATE_USER="yes"
@@ -272,6 +274,7 @@ parse_args() {
             --kong-port)        KONG_PORT="$2";     shift 2 ;;
             --gcs-bucket)       GCS_BUCKET="$2";    shift 2 ;;
             --gcs-key-file)     GCS_KEY_FILE="$2";  shift 2 ;;
+            --ar-registry)      AR_REGISTRY="$2";   shift 2 ;;
             --artifact-aes-key-file)         ARTIFACT_AES_KEY_FILE="$2";         shift 2 ;;
             --artifact-signing-pub-key-file) ARTIFACT_SIGNING_PUB_KEY_FILE="$2"; shift 2 ;;
             --create-user)      CREATE_USER="$2";   shift 2 ;;
@@ -627,6 +630,13 @@ main() {
             chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
             log_info "Signing key  → infra/secrets/artifact_signing_public_key.pem"
         fi
+
+        log_info "Authenticating Docker to ${AR_REGISTRY}..."
+        cat "${GCS_KEY_FILE}" | docker login "${AR_REGISTRY}" \
+            --username _json_key \
+            --password-stdin \
+            && log_info "Docker registry auth OK" \
+            || log_warn "Docker registry auth failed — check service account has Artifact Registry Reader role"
     else
         log_step "5/8  Secrets (skipped — development mode)"
     fi
@@ -645,6 +655,7 @@ main() {
 
     _env_set "KONG_HTTPS_PORT" "$KONG_PORT" "$env_file"
     if [[ -n "$DOMAIN" ]]; then _env_set "SITE_HOSTNAME" "$DOMAIN" "$env_file"; fi
+    if [[ "$DEPLOY_MODE" == "production" ]]; then _env_set "AR_REGISTRY" "$AR_REGISTRY" "$env_file"; fi
 
     chmod 600 "$env_file"
     chown root:root "$env_file"
