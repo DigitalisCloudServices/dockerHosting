@@ -55,16 +55,25 @@ The following items have been raised in the context of compliance assessments an
 | Item | Frameworks | Note |
 |---|---|---|
 | Formal ISMS documentation (SOA, risk register, management review) | ISO 27001 | Organisational governance; cannot be addressed by infrastructure scripts |
-| Incident response runbooks and escalation procedures | NIST IR, NIS2 | Detection tooling is in place; documented response procedures are the organisation's responsibility |
+| Incident response runbooks and escalation procedures | NIST IR, NIS2, SOC 2 CC7 | Detection tooling is in place; documented response procedures are the organisation's responsibility |
 | Staff security awareness training | CE+, NIS2, NIST AT | Personnel controls |
 | NIS2 registration with competent authority | NIS2 | Regulatory; depends on organisation's sector and size determination |
 | NIS2 incident reporting procedures (24h/72h timelines) | NIS2 Art 23 | Procedural; cannot be met by infrastructure scripts |
 | PCI QSA engagement and Report on Compliance | PCI DSS Req 12 | Required for PCI attestation; organisational commitment |
 | PCI CDE scoping documentation | PCI DSS | Must be determined by the organisation based on application architecture |
-| Supplier contracts and third-party risk registers (Cloudflare, NewRelic) | NIS2, ISO A.5 | Policy/procurement work |
-| Formal change management process | ISO A.8.9, NIST CM-3 | Git history provides audit trail; a formal CAB is an organisational process decision |
-| Block device encryption confirmation | ISO A.8.24, NIST SC-28, PCI Req 3 | VM hypervisor responsibility; assumed in place; confirmation requires access to hypervisor management |
+| Supplier contracts and third-party risk registers (Cloudflare, NewRelic) | NIS2, ISO A.5, SOC 2 CC9 | Policy/procurement work |
+| Formal change management process | ISO A.8.9, NIST CM-3, SOC 2 CC8 | Git history provides audit trail; a formal CAB is an organisational process decision |
+| Block device encryption confirmation | ISO A.8.24, NIST SC-28, PCI Req 3, GDPR Art 32 | VM hypervisor responsibility; assumed in place; confirmation requires access to hypervisor management |
+| SOC 2 audit engagement (Type I / Type II) | SOC 2 | Requires AICPA-licensed CPA firm; Type II needs ≥6-month observation window; organisational decision |
+| SOC 2 CC1–CC5 control documentation (policies, risk assessment) | SOC 2 | Control environment, risk management, and security policy documentation; organisational deliverable |
+| GDPR ROPA (Article 30), DPIA (Article 35), DPO (Article 37) | GDPR | Legal/governance obligations; determined by the deploying organisation's DPO or legal team |
+| GDPR Article 28 Data Processing Agreements | GDPR | Contractual; required where this hosting infrastructure acts as processor for a controller |
+| GDPR breach notification procedures (Article 33/34) | GDPR | 72-hour reporting obligation to supervisory authority; procedural, not infrastructure |
+| GDPR pseudonymisation of personal data | GDPR Art 32(1)(a) | Application-level data design; infrastructure scripts cannot determine what personal data is processed |
+| NCSC Cloud Security Principles governance framework (Principle 4) | NCSC CSP | Formal ISMS documentation; organisational deliverable |
+| NCSC Cloud Security Principles personnel security (Principle 6) | NCSC CSP | Background screening, joiners/movers/leavers process; HR and organisational |
+| G-Cloud supplier registration | NCSC CSP | Crown Commercial Service supplier submission; organisational decision |
 
 ---
 
-*Last updated: 2026-05-03*
+*Last updated: 2026-05-04*

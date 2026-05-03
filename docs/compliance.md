@@ -57,6 +57,15 @@ These scripts configure the host OS and Docker daemon on Debian Trixie. They do 
 
 ---
 
+## Related Documents
+
+| Document | Purpose |
+|---|---|
+| [sbom.md](sbom.md) | Software Bill of Materials — full component inventory with versions, sources, and licenses |
+| [compliance/gaps.md](compliance/gaps.md) | Open technical gaps, risk ratings, and remediation priorities |
+
+---
+
 ## Framework Coverage Summary
 
 Coverage is expressed as a range: **known ~ assumed**.
@@ -76,6 +85,9 @@ These are estimates against **technical controls only** and do not represent cer
 | UK Cyber Essentials Plus | ~68% ~ ~82% | [cyber-essentials-plus.md](compliance/cyber-essentials-plus.md) |
 | UK NIS / EU NIS2 (Article 21 technical measures) | ~72% ~ ~78% | [nis2.md](compliance/nis2.md) |
 | PCI DSS v4.0 (conditional scope) | ~65% ~ ~72% | [pci-dss.md](compliance/pci-dss.md) |
+| SOC 2 — Trust Service Criteria (CC6, CC7, CC8, Availability) | ~72% ~ ~80% | [soc2.md](compliance/soc2.md) |
+| UK NCSC Cloud Security Principles (14 principles) | ~75% ~ ~82% | [ncsc-cloud-principles.md](compliance/ncsc-cloud-principles.md) |
+| GDPR / UK GDPR — Article 32 Technical Measures | ~78% ~ ~85% | [gdpr-article32.md](compliance/gdpr-article32.md) |
 
 ---
 
@@ -108,6 +120,9 @@ All scripts in `setup.sh` run in full, including optional controls (AppArmor, US
 | UK Cyber Essentials Plus | ~10% | ~45% | ~68% ~ ~82% |
 | UK NIS / EU NIS2 | ~10% | ~40% | ~72% ~ ~78% |
 | PCI DSS v4.0 | ~5% | ~35% | ~65% ~ ~72% |
+| SOC 2 TSC (CC6/CC7/CC8/A1) | ~10% | ~40% | ~72% ~ ~80% |
+| NCSC Cloud Principles | ~10% | ~42% | ~75% ~ ~82% |
+| GDPR Art 32 Tech Measures | ~15% | ~48% | ~78% ~ ~85% |
 
 The gap between Default Debian and Typical Hardened is primarily SSH hardening, basic PAM, and UFW. The gap between Typical Hardened and dockerHosting is systematic coverage: comprehensive auditd rules (28+), per-site user isolation, Docker daemon hardening, kernel sysctl policy, AIDE FIM, AppArmor on all containers, automatic security updates, and USB/boot hardening. When external controls are added on top of dockerHosting, the effective posture increases further still.
 
@@ -139,4 +154,4 @@ Open technical gaps, risk ratings, priorities, and deferral rationale are mainta
 
 ---
 
-*Last updated: 2026-05-03*
+*Last updated: 2026-05-04*
