@@ -553,7 +553,7 @@ main() {
         fi
 
         log_info "Extracting infra artifact to ${DEPLOY_DIR}..."
-        tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" -C "${DEPLOY_DIR}"
+        tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" --strip-components=1 -C "${DEPLOY_DIR}"
         rm -f "${infra_tmp}"
         log_info "Infra extracted"
     else
