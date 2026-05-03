@@ -116,6 +116,62 @@ decrypt_artifact() {
     fi
 }
 
+# ── GCS helpers ──────────────────────────────────────────────────────────────
+# Convert gs://bucket/path → https://storage.googleapis.com/bucket/path
+_gcs_https_url() { printf 'https://storage.googleapis.com/%s' "${1#gs://}"; }
+
+# Exchange a service account JSON key for a short-lived OAuth2 Bearer token.
+# Requires: python3 (stdlib), openssl. No Google Cloud SDK needed.
+_gcs_access_token() {
+    local sa_file="$1"
+    python3 - "$sa_file" <<'PYEOF'
+import sys, json, time, base64, subprocess, urllib.request, urllib.parse, tempfile, os
+
+sa = json.load(open(sys.argv[1]))
+email   = sa['client_email']
+key_pem = sa['private_key']
+
+now = int(time.time())
+
+def b64url(data):
+    if isinstance(data, str):
+        data = data.encode()
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+
+header  = b64url(json.dumps({"alg":"RS256","typ":"JWT"}, separators=(',',':')))
+payload = b64url(json.dumps({
+    "iss":   email,
+    "scope": "https://www.googleapis.com/auth/devstorage.read_only",
+    "aud":   "https://oauth2.googleapis.com/token",
+    "iat":   now,
+    "exp":   now + 3600,
+}, separators=(',',':')))
+
+signing_input = f"{header}.{payload}".encode()
+
+with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as kf:
+    os.chmod(kf.fileno(), 0o600)
+    kf.write(key_pem)
+    key_path = kf.name
+try:
+    sig_bytes = subprocess.check_output(
+        ['openssl', 'dgst', '-sha256', '-sign', key_path],
+        input=signing_input, stderr=subprocess.DEVNULL
+    )
+finally:
+    os.unlink(key_path)
+
+jwt = f"{header}.{payload}.{b64url(sig_bytes)}"
+
+data = urllib.parse.urlencode({
+    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    "assertion":  jwt,
+}).encode()
+resp = urllib.request.urlopen("https://oauth2.googleapis.com/token", data=data)
+print(json.loads(resp.read())['access_token'], end='')
+PYEOF
+}
+
 # ── Systemd timer ─────────────────────────────────────────────────────────────
 
 install_updater_timer() {
@@ -382,10 +438,15 @@ main() {
     # ════════════════════════════════════════════════════════════════════════
     log_step "2/8  Authenticating to GCS and fetching channel metadata"
 
-    export GOOGLE_APPLICATION_CREDENTIALS="${GCS_KEY_FILE}"
+    log_info "Obtaining GCS access token..."
+    local GCS_TOKEN
+    GCS_TOKEN="$(_gcs_access_token "${GCS_KEY_FILE}")" \
+        || { log_error "Failed to obtain GCS access token — check service account key"; exit 1; }
 
     log_info "Fetching ${GCS_BUCKET}/channels/prod-latest.json..."
-    CHANNEL_META="$(gsutil cat "${GCS_BUCKET}/channels/prod-latest.json")"
+    CHANNEL_META="$(curl -fsSL \
+        -H "Authorization: Bearer ${GCS_TOKEN}" \
+        "$(_gcs_https_url "${GCS_BUCKET}/channels/prod-latest.json")")"
 
     INFRA_ARTIFACT="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin)['infra_artifact'])")"
     FRONTEND_ARTIFACT="$(echo "${CHANNEL_META}"  | python3 -c "import json,sys; print(json.load(sys.stdin)['frontend_artifact'])")"
@@ -411,15 +472,20 @@ main() {
     log_info "Downloading infra artifact from GCS..."
     local infra_tmp
     infra_tmp=$(mktemp /tmp/infra-XXXXXX.tar.gz.download)
-    gsutil cp "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}" "${infra_tmp}"
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -H "Authorization: Bearer ${GCS_TOKEN}" \
+        -o "${infra_tmp}" \
+        "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}")"
 
     local decrypt_sh="/tmp/decrypt-bootstrap.sh"
     # Bootstrap decrypt.sh from the bundle itself if not yet extracted
     # (On first deploy infra/secrets doesn't exist yet — use null-key mode)
     SKIP_ENCRYPTION=true bash <(tar -xzOf "${infra_tmp}" infra/artifact-crypto/decrypt.sh 2>/dev/null || true) \
         --bundle "${infra_tmp}" --out-tar "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" 2>/dev/null \
-    || SKIP_ENCRYPTION=true gsutil cp "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}" \
-        "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}"
+    || curl -fsSL --retry 3 --retry-delay 5 \
+        -H "Authorization: Bearer ${GCS_TOKEN}" \
+        -o "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" \
+        "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}")"
 
     log_info "Extracting infra artifact to ${DEPLOY_DIR}..."
     tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" -C "${DEPLOY_DIR}"
@@ -482,8 +548,10 @@ main() {
     chown root:root "$env_file"
 
     log_info "Downloading frontend artifact..."
-    gsutil cp "${GCS_BUCKET}/artifacts/${FRONTEND_ARTIFACT}" \
-        "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download"
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -H "Authorization: Bearer ${GCS_TOKEN}" \
+        -o "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download" \
+        "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${FRONTEND_ARTIFACT}")"
     decrypt_artifact \
         "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download" \
         "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}" \
@@ -493,8 +561,10 @@ main() {
     _env_set "FRONTEND_ARTIFACT" "./artifact-cache/${FRONTEND_ARTIFACT}" "$env_file"
 
     log_info "Downloading wordpress artifact..."
-    gsutil cp "${GCS_BUCKET}/artifacts/${WORDPRESS_ARTIFACT}" \
-        "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download"
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -H "Authorization: Bearer ${GCS_TOKEN}" \
+        -o "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download" \
+        "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${WORDPRESS_ARTIFACT}")"
     decrypt_artifact \
         "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download" \
         "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}" \
