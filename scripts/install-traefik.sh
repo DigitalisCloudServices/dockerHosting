@@ -312,7 +312,7 @@ start_traefik() {
     # Traefik is a trusted infra component; all tenant containers keep userns protection.
     docker run -d \
         --name traefik \
-        --restart unless-stopped \
+        --restart always \
         --network host \
         --userns=host \
         --cap-drop ALL \

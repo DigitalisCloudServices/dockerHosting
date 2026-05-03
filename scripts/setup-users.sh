@@ -23,9 +23,10 @@ echo "[INFO] Setting up user and permissions for $SITE_NAME..."
 if id "$SITE_NAME" &>/dev/null; then
     echo "[INFO] User $SITE_NAME already exists"
 else
-    # Create system user with home directory set to deployment directory
-    useradd -r -m -d "$DEPLOY_DIR" -s /bin/bash "$SITE_NAME"
-    echo "[INFO] Created system user: $SITE_NAME with home: $DEPLOY_DIR"
+    # System user: nologin shell, no home dir created (deploy dir set as home
+    # for env/sudo purposes but not created here — deploy-site.sh handles it)
+    useradd -r -M -d "$DEPLOY_DIR" -s /usr/sbin/nologin "$SITE_NAME"
+    echo "[INFO] Created system user: $SITE_NAME (nologin, home ref: $DEPLOY_DIR)"
 fi
 
 # NOTE: User is NOT added to docker group for security reasons
