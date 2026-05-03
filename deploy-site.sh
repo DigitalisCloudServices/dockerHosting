@@ -556,6 +556,14 @@ main() {
         tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" --strip-components=1 -C "${DEPLOY_DIR}"
         rm -f "${infra_tmp}"
         log_info "Infra extracted"
+
+        local gen_env="${DEPLOY_DIR}/infra/scripts/generate-env.sh"
+        if [[ -f "${gen_env}" ]]; then
+            log_info "Generating application secrets..."
+            bash "${gen_env}"
+        else
+            log_warn "generate-env.sh not found at ${gen_env} — run it manually before starting the stack"
+        fi
     else
         log_step "3/8  Deploy directory skeleton (development mode)"
 
