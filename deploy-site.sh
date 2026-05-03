@@ -295,7 +295,9 @@ main() {
     check_root "$@"
     parse_args "$@"
 
-    [[ "$NON_INTERACTIVE" != "true" ]] && gather_interactive
+    if [[ "$NON_INTERACTIVE" != "true" ]]; then
+        gather_interactive
+    fi
     apply_defaults
 
     [[ -z "$SITE_NAME" ]]    && { log_error "Site name is required";          exit 1; }
