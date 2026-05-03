@@ -85,10 +85,15 @@ if ! grep -q "pam_faillock.so" /etc/pam.d/common-auth; then
     # Backup
     cp /etc/pam.d/common-auth "/etc/pam.d/common-auth.$(date +%Y%m%d)"
 
-    # Add faillock before pam_unix
+    # Add faillock before and after pam_unix.
+    # IMPORTANT: each 'sed /pattern/a' inserts immediately after the matched line, pushing
+    # any prior insertion down. Insert authsucc first so authfail lands directly after pam_unix.
+    # Final order: preauth → pam_unix → authfail ([default=die]) → authsucc (sufficient)
+    # On success: pam_unix success=1 skips authfail, reaches authsucc → auth passes.
+    # On failure: pam_unix ignored, authfail records failure and [default=die] kills auth.
     sed -i '/pam_unix.so/i auth    required    pam_faillock.so preauth silent audit deny=5 unlock_time=900' /etc/pam.d/common-auth
-    sed -i '/pam_unix.so/a auth    [default=die]    pam_faillock.so authfail audit deny=5 unlock_time=900' /etc/pam.d/common-auth
     sed -i '/pam_unix.so/a auth    sufficient    pam_faillock.so authsucc audit deny=5 unlock_time=900' /etc/pam.d/common-auth
+    sed -i '/pam_unix.so/a auth    [default=die]    pam_faillock.so authfail audit deny=5 unlock_time=900' /etc/pam.d/common-auth
 
     echo "[INFO] Added account lockout policy (5 attempts, 15 min lockout)"
 fi
