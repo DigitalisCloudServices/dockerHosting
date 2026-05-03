@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 #############################################
 # PAM Password Policy Configuration
@@ -92,13 +93,13 @@ if ! grep -q "pam_faillock.so" /etc/pam.d/common-auth; then
     echo "[INFO] Added account lockout policy (5 attempts, 15 min lockout)"
 fi
 
-# Test PAM configuration
-echo "[INFO] Testing PAM configuration..."
-if pamtest=$(pam-auth-update --force 2>&1); then
-    echo "[INFO] PAM configuration test passed"
-else
-    echo "[WARN] PAM test output: $pamtest"
-fi
+# Verify PAM configuration was applied
+echo "[INFO] Verifying PAM configuration..."
+errors=0
+grep -q "pam_pwquality.so" /etc/pam.d/common-password || { echo "[WARN] pam_pwquality not found in common-password"; errors=$((errors+1)); }
+grep -q "remember=5" /etc/pam.d/common-password       || { echo "[WARN] password history not set in common-password"; errors=$((errors+1)); }
+grep -q "pam_faillock.so" /etc/pam.d/common-auth      || { echo "[WARN] pam_faillock not found in common-auth"; errors=$((errors+1)); }
+[ $errors -eq 0 ] && echo "[INFO] PAM configuration verified"
 
 echo ""
 echo "[INFO] ════════════════════════════════════════════"

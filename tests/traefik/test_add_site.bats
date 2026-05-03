@@ -88,6 +88,11 @@ teardown() {
     assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "127.0.0.1:3001"
 }
 
+@test "add-traefik-site: backend URL uses https scheme" {
+    bash "$SCRIPTS_DIR/add-traefik-site.sh" example.com 3001
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "https://127.0.0.1:3001"
+}
+
 @test "add-traefik-site: config targets websecure entrypoint" {
     bash "$SCRIPTS_DIR/add-traefik-site.sh" example.com 3001
     assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "websecure"
@@ -118,6 +123,18 @@ teardown() {
 @test "add-traefik-site: explicit site name used in Host rule" {
     bash "$SCRIPTS_DIR/add-traefik-site.sh" example.com 3001 mysite
     assert_file_contains "$TRAEFIK_DYNAMIC_DIR/mysite.yml" 'Host(`example.com`)'
+}
+
+# ── insecureSkipVerify ────────────────────────────────────────────────────────
+
+@test "add-traefik-site: config sets insecureSkipVerify for self-signed backend certs" {
+    bash "$SCRIPTS_DIR/add-traefik-site.sh" example.com 3001
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "insecureSkipVerify: true"
+}
+
+@test "add-traefik-site: serversTransport references site-scoped transport name" {
+    bash "$SCRIPTS_DIR/add-traefik-site.sh" example.com 3001
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "example-com-transport"
 }
 
 # ── SSL cert behaviour ────────────────────────────────────────────────────────

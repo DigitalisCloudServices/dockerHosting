@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 #############################################
 # Install Docker and Docker Compose
@@ -53,9 +54,6 @@ apt-get install -y \
     containerd.io \
     docker-buildx-plugin \
     docker-compose-plugin
-
-# Allow docker in rootless mode to work on ports lower than 1024
-setcap 'cap_net_bind_service=+ep' /usr/bin/docker
 
 # Lower CPU/IO scheduling weight so containers yield to SSH and system processes
 # under contention. Default weight is 100; 20 deprioritises containers without

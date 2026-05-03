@@ -14,9 +14,14 @@ http:
       middlewares:
         - security-headers@file
 
+  serversTransports:
+    {{SITE_NAME}}-transport:
+      insecureSkipVerify: true
+
   services:
     {{SITE_NAME}}:
       loadBalancer:
+        serversTransport: {{SITE_NAME}}-transport
         passHostHeader: true
         servers:
-          - url: "http://127.0.0.1:{{PORT}}"
+          - url: "https://127.0.0.1:{{PORT}}"

@@ -11,6 +11,9 @@
 
 set -e  # Exit on error
 
+# Ensure sbin directories are in PATH (may be missing when invoked via sudo/curl|bash)
+export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 # Auto-elevate to root if not already running as root
 if [ "$EUID" -ne 0 ]; then
     echo "This script requires root privileges. Re-running with sudo..."

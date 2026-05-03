@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 #############################################
 # Add a Site to Traefik Routing
