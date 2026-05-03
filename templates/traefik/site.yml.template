@@ -14,14 +14,19 @@ http:
       middlewares:
         - security-headers@file
 
-  serversTransports:
-    {{SITE_NAME}}-transport:
-      insecureSkipVerify: true
+  # OPTIONAL: If the backend uses HTTPS with a self-signed cert, uncomment the
+  # serversTransports block below and change the server url to https://. Note
+  # that the connection is on localhost/isolated Docker network so plain HTTP
+  # (the default) is safe and eliminates certificate validation errors.
+  #
+  # serversTransports:
+  #   {{SITE_NAME}}-transport:
+  #     insecureSkipVerify: true
+  # (and add `serversTransport: {{SITE_NAME}}-transport` under loadBalancer)
 
   services:
     {{SITE_NAME}}:
       loadBalancer:
-        serversTransport: {{SITE_NAME}}-transport
         passHostHeader: true
         servers:
-          - url: "https://127.0.0.1:{{PORT}}"
+          - url: "http://127.0.0.1:{{PORT}}"

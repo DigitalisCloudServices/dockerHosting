@@ -315,6 +315,27 @@ EOF
     grep -q "unless-stopped" "$docker_log"
 }
 
+@test "start_traefik: drops all capabilities" {
+    local docker_log="$BATS_TEST_TMPDIR/docker.log"
+    create_call_log_mock "docker" "$docker_log"
+    start_traefik
+    grep -q "\-\-cap-drop ALL" "$docker_log"
+}
+
+@test "start_traefik: adds NET_BIND_SERVICE for privileged port binding" {
+    local docker_log="$BATS_TEST_TMPDIR/docker.log"
+    create_call_log_mock "docker" "$docker_log"
+    start_traefik
+    grep -q "\-\-cap-add NET_BIND_SERVICE" "$docker_log"
+}
+
+@test "start_traefik: sets no-new-privileges security option" {
+    local docker_log="$BATS_TEST_TMPDIR/docker.log"
+    create_call_log_mock "docker" "$docker_log"
+    start_traefik
+    grep -q "\-\-security-opt no-new-privileges:true" "$docker_log"
+}
+
 # ── check_nginx_migration prompt flags ───────────────────────────────────────
 
 @test "check_nginx_migration: exits 0 with MIGRATE_NGINX=no when nginx detected" {

@@ -49,6 +49,11 @@ if ls "$DEPLOY_DIR"/docker-compose*.yml 1> /dev/null 2>&1; then
     fi
 
     cd - > /dev/null
+
+    echo "[INFO] Security: ensure each service in $COMPOSE_FILE includes:"
+    echo "         cap_drop: [ALL]"
+    echo "         security_opt: [no-new-privileges:true]"
+    echo "[INFO] Use scripts/harden-compose.sh $DEPLOY_DIR to generate a docker-compose.override.yml"
 fi
 
 # Check for .env template

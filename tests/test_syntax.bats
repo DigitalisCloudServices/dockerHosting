@@ -71,6 +71,18 @@ _syntax_check() {
     _syntax_check "scripts/harden-ssh.sh"
 }
 
+@test "syntax: scripts/harden-bootloader.sh" {
+    _syntax_check "scripts/harden-bootloader.sh"
+}
+
+@test "syntax: scripts/harden-usb.sh" {
+    _syntax_check "scripts/harden-usb.sh"
+}
+
+@test "syntax: scripts/harden-compose.sh" {
+    _syntax_check "scripts/harden-compose.sh"
+}
+
 # ── setup scripts ─────────────────────────────────────────────────────────────
 
 @test "syntax: scripts/setup-aide.sh" {
@@ -117,6 +129,22 @@ _syntax_check() {
     _syntax_check "scripts/setup-users.sh"
 }
 
+@test "syntax: scripts/setup-ntp.sh" {
+    _syntax_check "scripts/setup-ntp.sh"
+}
+
+@test "syntax: scripts/setup-apparmor.sh" {
+    _syntax_check "scripts/setup-apparmor.sh"
+}
+
+@test "syntax: scripts/setup-ssh-mfa.sh" {
+    _syntax_check "scripts/setup-ssh-mfa.sh"
+}
+
+@test "syntax: scripts/setup-secret-scan.sh" {
+    _syntax_check "scripts/setup-secret-scan.sh"
+}
+
 # ── configure / utility scripts ───────────────────────────────────────────────
 
 @test "syntax: scripts/configure-firewall.sh" {
@@ -137,4 +165,8 @@ _syntax_check() {
 
 @test "syntax: scripts/recover-docker.sh" {
     _syntax_check "scripts/recover-docker.sh"
+}
+
+@test "syntax: scripts/scan-image.sh" {
+    _syntax_check "scripts/scan-image.sh"
 }

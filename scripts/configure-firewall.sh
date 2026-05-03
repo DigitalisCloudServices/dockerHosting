@@ -27,21 +27,35 @@ fi
 # Disable UFW temporarily to configure
 ufw --force disable
 
-# Set default policies
+# Set default policies — deny all inbound; explicit allow-list for outbound
 ufw default deny incoming
-ufw default allow outgoing
+ufw default deny outgoing
+ufw default deny forward
 
-# Allow SSH (important!)
-ufw allow 22/tcp comment 'SSH'
+# --- INBOUND ---
+ufw allow in 22/tcp  comment 'SSH'
+ufw allow in 80/tcp  comment 'HTTP'
+ufw allow in 443/tcp comment 'HTTPS'
 
-# Allow HTTP and HTTPS
-ufw allow 80/tcp comment 'HTTP'
-ufw allow 443/tcp comment 'HTTPS'
+# Allow traffic from Docker bridge networks (container → host)
+ufw allow in from 172.16.0.0/12
+ufw allow in from 192.168.0.0/16
 
-# Allow Docker networking (important for container communication)
-# Allow traffic on Docker networks
-ufw allow from 172.16.0.0/12 to any
-ufw allow from 192.168.0.0/16 to any
+# --- OUTBOUND ---
+# DNS (standard — UDP + TCP for large responses/zone transfers)
+ufw allow out 53/udp  comment 'DNS'
+ufw allow out 53/tcp  comment 'DNS (TCP)'
+# DNS over TLS (encrypted DNS — e.g. systemd-resolved stub, Unbound)
+ufw allow out 853/tcp comment 'DNS over TLS'
+# HTTP/HTTPS (apt updates, Docker pulls, Let's Encrypt, DNS over HTTPS via 443)
+ufw allow out 80/tcp  comment 'HTTP out'
+ufw allow out 443/tcp comment 'HTTPS out'
+# NTP (chrony)
+ufw allow out 123/udp comment 'NTP'
+# SMTP submission (msmtp / email notifications)
+ufw allow out 587/tcp comment 'SMTP submission'
+# Loopback (always required for local inter-process communication)
+ufw allow out on lo
 
 # Enable UFW
 echo "[INFO] Enabling UFW firewall..."
@@ -54,11 +68,11 @@ ufw status verbose
 echo ""
 
 echo "[INFO] Default rules configured:"
-echo "  - SSH (22/tcp): ALLOWED"
-echo "  - HTTP (80/tcp): ALLOWED"
-echo "  - HTTPS (443/tcp): ALLOWED"
-echo "  - Docker networks: ALLOWED"
+echo "  - Inbound:  SSH (22), HTTP (80), HTTPS (443), Docker bridge networks"
+echo "  - Outbound: DNS (53), DNS-over-TLS (853), HTTP (80), HTTPS (443), NTP (123/udp), SMTP (587), loopback"
+echo "  - All other inbound/outbound: DENIED"
 echo ""
 echo "[INFO] To allow additional ports, use:"
-echo "  sudo ufw allow <port>/tcp"
+echo "  sudo ufw allow <port>/tcp    # inbound"
+echo "  sudo ufw allow out <port>/tcp  # outbound"
 echo ""

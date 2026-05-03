@@ -88,9 +88,9 @@ teardown() {
     assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "127.0.0.1:3001"
 }
 
-@test "add-traefik-site: backend URL uses https scheme" {
+@test "add-traefik-site: backend URL uses http scheme (plain HTTP safe on localhost/Docker network)" {
     bash "$SCRIPTS_DIR/add-traefik-site.sh" example.com 3001
-    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "https://127.0.0.1:3001"
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/example-com.yml" "http://127.0.0.1:3001"
 }
 
 @test "add-traefik-site: config targets websecure entrypoint" {

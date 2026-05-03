@@ -90,9 +90,49 @@ install_basic_packages() {
 
     apt-get update
     apt-get upgrade -y
-    apt-get install -y curl git wget ca-certificates gnupg lsb-release apt-transport-https
+    apt-get install -y sudo curl git wget ca-certificates gnupg lsb-release apt-transport-https
 
     log_info "Basic packages installed"
+}
+
+# Prompt to add a user to the sudo group
+setup_sudo_user() {
+    echo ""
+    log_info "sudo is installed. You can grant an existing user sudo privileges now."
+
+    local available_users
+    available_users=$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' /etc/passwd)
+
+    if [ -n "$available_users" ]; then
+        log_info "Available users (UID 1000–65533):"
+        echo "$available_users" | while read -r u; do echo "  - $u"; done
+    fi
+
+    echo ""
+    read -p "Add a user to the sudo group? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Skipping sudo user setup"
+        return 0
+    fi
+
+    local username
+    while true; do
+        read -rp "Enter username to add to sudo group: " username
+        if [ -z "$username" ]; then
+            log_warn "Username cannot be empty. Try again."
+            continue
+        fi
+        if ! id "$username" &>/dev/null; then
+            log_warn "User '$username' does not exist. Try again."
+            continue
+        fi
+        break
+    done
+
+    usermod -aG sudo "$username"
+    log_info "User '$username' added to the sudo group"
+    log_warn "They will need to log out and back in for the change to take effect"
 }
 
 # Log the current branch and commit hash of the repository
@@ -152,13 +192,61 @@ clone_repository() {
     fi
 }
 
+# Check that sudo users have SSH keys before locking down password auth.
+# Returns 1 (skip hardening) if the user declines to proceed.
+confirm_ssh_keys_before_hardening() {
+    echo ""
+    log_warn "══════════════════════════════════════════════════════"
+    log_warn "  SSH HARDENING — PASSWORD AUTH WILL BE DISABLED"
+    log_warn "══════════════════════════════════════════════════════"
+    echo ""
+    log_warn "After this step, SSH key authentication is the ONLY way in."
+    log_warn "If no key is configured for your sudo user you will be locked out."
+    echo ""
+
+    # Collect users in the sudo group
+    local sudo_users=()
+    while IFS= read -r u; do
+        sudo_users+=("$u")
+    done < <(getent group sudo 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -v '^$' || true)
+
+    if [ ${#sudo_users[@]} -eq 0 ]; then
+        log_warn "No users found in the sudo group."
+        log_warn "You should add a sudo user before disabling password auth!"
+    else
+        log_info "Users in the sudo group and their SSH key status:"
+        for u in "${sudo_users[@]}"; do
+            local home_dir
+            home_dir=$(getent passwd "$u" | cut -d: -f6)
+            local auth_keys="$home_dir/.ssh/authorized_keys"
+            if [ -f "$auth_keys" ] && grep -qE '^(ssh-|ecdsa-|sk-)' "$auth_keys" 2>/dev/null; then
+                local key_count
+                key_count=$(grep -cE '^(ssh-|ecdsa-|sk-)' "$auth_keys")
+                echo -e "  ${GREEN}✓${NC} $u — $key_count key(s) in $auth_keys"
+            else
+                echo -e "  ${RED}✗${NC} $u — NO authorized_keys found at $auth_keys"
+            fi
+        done
+    fi
+
+    echo ""
+    log_warn "Have you confirmed SSH key access works in a SEPARATE terminal? (type 'yes' to proceed)"
+    read -rp "> " confirm
+    echo
+    if [ "$confirm" != "yes" ]; then
+        log_warn "SSH hardening skipped — answer must be exactly 'yes'"
+        return 1
+    fi
+    return 0
+}
+
 # Run full setup from repository
 # Usage: run_full_setup [--force[=step1,step2,...]]
 #   --force            force-run every step even if already configured
 #   --force=docker     force only the named step(s); comma-separated
 #   Valid step names: packages, docker, traefik, firewall, kernel, audit,
 #                     auto-updates, harden-docker, pam, aide, shm, fail2ban,
-#                     email, ssh, logrotate
+#                     email, ntp, apparmor, ssh, mfa, bootloader, logrotate
 run_full_setup() {
     log_info "Running full setup from repository scripts..."
     echo ""
@@ -224,6 +312,13 @@ run_full_setup() {
         bash "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh" $(_flag kernel)
     fi
 
+    # Configure NTP time synchronisation (chrony)
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-ntp.sh" ]; then
+        log_info "Configuring NTP time synchronisation..."
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/setup-ntp.sh" $(_flag ntp)
+    fi
+
     # Setup audit logging
     if [ -f "$DOCKERHOSTING_DIR/scripts/setup-audit.sh" ]; then
         log_info "Setting up audit logging..."
@@ -243,6 +338,13 @@ run_full_setup() {
         log_info "Hardening Docker daemon..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" $(_flag harden-docker)
+    fi
+
+    # Enable AppArmor mandatory access control
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-apparmor.sh" ]; then
+        log_info "Enabling AppArmor mandatory access control..."
+        # shellcheck disable=SC2046
+        bash "$DOCKERHOSTING_DIR/scripts/setup-apparmor.sh" $(_flag apparmor)
     fi
 
     # Configure PAM password policy
@@ -287,12 +389,63 @@ run_full_setup() {
         fi
     fi
 
+    # Optional: GRUB bootloader password (prevents single-user-mode bypass)
+    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-bootloader.sh" ]; then
+        echo ""
+        log_warn "GRUB bootloader hardening prevents console/single-user-mode bypass (CIS 1.4)."
+        log_warn "Requires remembering a GRUB password — recovery without it needs a rescue disk."
+        read -p "Harden GRUB bootloader? (y/N) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # shellcheck disable=SC2046
+            bash "$DOCKERHOSTING_DIR/scripts/harden-bootloader.sh" $(_flag bootloader)
+        else
+            log_info "Skipping bootloader hardening"
+        fi
+    fi
+
+    # Optional: USB / removable media hardening
+    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-usb.sh" ]; then
+        echo ""
+        log_warn "USB hardening blacklists usb-storage, FireWire, and Thunderbolt kernel modules (CIS L2)."
+        log_warn "Safe to enable on VMs. On bare-metal, confirm USB input devices are not the only keyboard/mouse."
+        log_warn "A reboot is required for the blacklist to take full effect."
+        read -p "Apply USB/removable media hardening? (y/N) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # shellcheck disable=SC2046
+            bash "$DOCKERHOSTING_DIR/scripts/harden-usb.sh" $(_flag usb)
+        else
+            log_info "Skipping USB hardening — can be enabled later: scripts/harden-usb.sh"
+        fi
+    fi
+
+    # Ensure a sudo user exists with SSH keys before locking down password auth
+    setup_sudo_user
+
     # Harden SSH (do this last as it may affect connectivity)
     if [ -f "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" ]; then
-        log_warn "Hardening SSH configuration..."
-        log_warn "IMPORTANT: Ensure you have SSH keys configured before this step!"
-        # shellcheck disable=SC2046
-        bash "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" $(_flag ssh)
+        if ! confirm_ssh_keys_before_hardening; then
+            log_warn "Skipping SSH hardening — re-run with --force=ssh once keys are in place"
+        else
+            # shellcheck disable=SC2046
+            bash "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" $(_flag ssh)
+        fi
+    fi
+
+    # Optional: SSH MFA (TOTP second factor) — requires per-user enrolment
+    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-ssh-mfa.sh" ]; then
+        echo ""
+        log_warn "SSH MFA adds a TOTP second factor to every SSH login (ISO A.8.5)."
+        log_warn "Each user must run 'google-authenticator' after setup or they will be locked out."
+        read -p "Configure SSH MFA (TOTP)? (y/N) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # shellcheck disable=SC2046
+            bash "$DOCKERHOSTING_DIR/scripts/setup-ssh-mfa.sh" $(_flag mfa)
+        else
+            log_info "Skipping SSH MFA — can be enabled later: scripts/setup-ssh-mfa.sh"
+        fi
     fi
 
     # Setup log rotation
@@ -339,8 +492,10 @@ main() {
     log_warn "  - Test SSH access in a NEW terminal before logging out!"
     echo ""
     log_info "Security features enabled:"
-    echo "  ✓ Firewall (UFW) with default-deny"
+    echo "  ✓ Firewall (UFW) with default-deny inbound + egress filtering"
     echo "  ✓ Kernel hardening (ASLR, SYN cookies, anti-spoofing)"
+    echo "  ✓ NTP time synchronisation (chrony)"
+    echo "  ✓ AppArmor mandatory access control"
     echo "  ✓ Audit logging (auditd) for security events"
     echo "  ✓ Automated security updates (daily)"
     echo "  ✓ SSH hardening (key-only auth, rate limiting)"
@@ -368,8 +523,11 @@ main() {
     echo "  - Check Traefik: docker ps --filter name=traefik"
     echo "  - Traefik dashboard: http://<server-ip>:8080/dashboard/ (see /etc/traefik/dashboard-credentials)"
     echo "  - Check firewall: sudo ufw status"
+    echo "  - Check NTP sync: chronyc tracking"
+    echo "  - Check AppArmor: sudo aa-status --summary"
     echo "  - Check audit logs: sudo ausearch -ts recent"
     echo "  - Check security updates: cat /var/log/unattended-upgrades/unattended-upgrades.log"
+    echo "  - Scan image for CVEs: sudo $DOCKERHOSTING_DIR/scripts/scan-image.sh <image>"
     echo "  - Deploy site: cd $DOCKERHOSTING_DIR && sudo ./deploy-site.sh"
     echo "  - Add Traefik route: sudo $DOCKERHOSTING_DIR/scripts/add-traefik-site.sh <domain> <port>"
     echo ""

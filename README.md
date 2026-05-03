@@ -4,6 +4,8 @@ Server setup and deployment automation for Debian Trixie servers hosting Docker-
 
 **Boundary proxy:** [Traefik v3.6](https://traefik.io/traefik/) — self-signed SSL out of the box, hostname-based routing, zero-reload config via file provider.
 
+> **Security posture:** See [docs/compliance.md](docs/compliance.md) for a full mapping of implemented controls against ISO 27001:2022, CIS Benchmarks (Linux + Docker), and NIST SP 800-53.
+
 ## Purpose
 
 This repository provides scripts to:
@@ -30,10 +32,10 @@ sudo ./setup.sh
 - Installs Docker and Docker Compose
 - Installs essential packages (git, curl, make, etc.)
 - **Installs Traefik v3.6** as the boundary proxy (replaces nginx at the host level)
-- Configures firewall (UFW)
-- Sets up security hardening (kernel params, SSH, fail2ban, audit logging)
+- Configures firewall (UFW) with default-deny inbound and egress allow-list
+- Sets up security hardening (kernel params, NTP, AppArmor, SSH, fail2ban, audit logging, AIDE FIM)
 - Sets up automated security updates
-- Configures email notifications (optional - for alerts and system notifications)
+- Optionally configures SSH MFA (TOTP), GRUB bootloader password, and email notifications
 - Sets up log rotation
 
 **After setup:** Log out and log back in for group changes to take effect.
@@ -156,24 +158,42 @@ dockerHosting/
 ├── deploy-site.sh                    # Interactive site deployment script
 ├── Makefile                          # Developer targets: make lint, make test
 ├── .shellcheckrc                     # shellcheck configuration
+├── docs/
+│   └── compliance.md                 # Security posture: ISO 27001 / CIS / NIST mapping
 ├── scripts/                          # Modular setup scripts
-│   ├── install-docker.sh             # Docker installation
+│   ├── install-docker.sh             # Docker installation (GPG-verified repo)
 │   ├── install-packages.sh           # Package installation
 │   ├── install-traefik.sh            # Traefik boundary proxy installation
 │   ├── add-traefik-site.sh           # Add a site to Traefik (DOMAIN PORT)
 │   ├── remove-traefik-site.sh        # Remove a site from Traefik
 │   ├── install-nginx.sh              # Nginx (kept for in-container use)
+│   ├── configure-firewall.sh         # UFW: default-deny inbound + egress allow-list
+│   ├── harden-kernel.sh              # sysctl: ASLR, SYN cookies, BPF, ptrace
+│   ├── harden-docker.sh              # Docker daemon: icc=false, seccomp, userns-remap
+│   ├── harden-shared-memory.sh       # /dev/shm: noexec, nodev, nosuid
+│   ├── harden-ssh.sh                 # SSH: key-only, strong ciphers, no forwarding
+│   ├── harden-bootloader.sh          # GRUB password (optional, CIS 1.4)
+│   ├── harden-compose.sh             # Generate docker-compose.override.yml with cap_drop/no-new-privileges
+│   ├── setup-ntp.sh                  # chrony NTP hardening (ISO A.8.17)
+│   ├── setup-apparmor.sh             # AppArmor MAC + Docker default profile
+│   ├── setup-pam-policy.sh           # PAM: password complexity + account lockout
+│   ├── setup-audit.sh                # auditd: 28+ syscall/file audit rules
+│   ├── setup-aide.sh                 # AIDE file integrity monitoring
+│   ├── setup-fail2ban-enhanced.sh    # fail2ban: progressive SSH bans
+│   ├── setup-ssh-mfa.sh              # SSH TOTP MFA via libpam-google-authenticator (optional)
+│   ├── scan-image.sh                 # Trivy container image vulnerability scanner
+│   ├── setup-auto-updates.sh         # unattended-upgrades (daily security patches)
 │   ├── setup-users.sh                # User and permission management
 │   ├── setup-logrotate.sh            # Log rotation configuration
-│   ├── setup-email.sh                # Email notification setup
-│   ├── configure-firewall.sh         # Firewall setup
-│   ├── harden-*.sh                   # Security hardening scripts
+│   ├── setup-email.sh                # Email notification setup (msmtp)
+│   ├── setup-docker-network.sh       # Per-site Docker bridge networks
+│   ├── setup-docker-permissions.sh   # Least-privilege sudoers rules per site
 │   └── configure-site.sh             # Site-specific configuration
 ├── templates/                        # Configuration templates
 │   ├── traefik/
 │   │   ├── traefik.yml               # Traefik static config template
 │   │   ├── middleware.yml            # Shared security headers + rate limiting
-│   │   └── site.yml.template         # Per-site dynamic config template
+│   │   └── site.yml.template         # Per-site dynamic config (HTTP backend, no insecureSkipVerify)
 │   ├── logrotate.conf.template       # Log rotation template
 │   ├── systemd.service.template      # Systemd service template
 │   └── env.template                  # Environment file template
@@ -184,7 +204,7 @@ dockerHosting/
 │   │   ├── test_add_site.bats        # Tests for add-traefik-site.sh
 │   │   ├── test_remove_site.bats     # Tests for remove-traefik-site.sh
 │   │   └── test_install_traefik.bats # Tests for install-traefik.sh
-│   ├── test_syntax.bats              # bash -n syntax check for all 28 scripts
+│   ├── test_syntax.bats              # bash -n syntax check for all 33 scripts
 │   └── test_arg_validation.bats      # Argument validation for key scripts
 └── config/                           # Configuration files
     └── packages.list                 # List of packages to install
@@ -259,6 +279,26 @@ sudo ./deploy-site.sh \
 
 ## Manual Script Usage
 
+### Run individual hardening steps
+
+Each hardening script is idempotent — safe to re-run, skips if already configured. Use `--force` to reconfigure.
+
+```bash
+sudo ./scripts/setup-ntp.sh             # NTP time synchronisation (chrony)
+sudo ./scripts/setup-apparmor.sh        # AppArmor mandatory access control
+sudo ./scripts/setup-ssh-mfa.sh         # SSH TOTP MFA (prompts; optional)
+sudo ./scripts/harden-bootloader.sh     # GRUB bootloader password (prompts; optional)
+
+# Scan a container image for known CVEs before deploying
+sudo ./scripts/scan-image.sh nginx:latest
+sudo ./scripts/scan-image.sh --compose /opt/apps/mysite/docker-compose.yml
+sudo ./scripts/scan-image.sh --severity CRITICAL,HIGH --ignore-unfixed myimage:tag
+
+# Force re-run a specific step without re-running setup in full
+sudo ./setup.sh --force=ntp
+sudo ./setup.sh --force=apparmor,firewall
+```
+
 ### Install Docker Only
 
 ```bash
@@ -308,17 +348,26 @@ sudo ./scripts/setup-users.sh myapp /opt/apps/myapp
 ## Features
 
 ### Security
-- Firewall configuration (UFW) with default-deny policy
-- Kernel hardening (ASLR, SYN cookies, IP spoofing protection)
-- SSH hardening (key-only authentication, rate limiting)
-- fail2ban protection for brute-force prevention
-- Audit logging (auditd) for security events
-- Automated security updates (unattended-upgrades)
-- File integrity monitoring (AIDE with background initialization)
-- Docker daemon hardening
-- User isolation per site
-- Proper file permissions
-- Secure secret handling
+
+See [docs/compliance.md](docs/compliance.md) for full framework mapping (ISO 27001, CIS, NIST).
+
+- **Firewall (UFW)** — default-deny inbound; egress allow-list (DNS, DNS-over-TLS, HTTP/S, NTP, SMTP)
+- **Kernel hardening** — ASLR, SYN cookies, BPF/ptrace restrictions, IP spoofing protection
+- **NTP** — chrony with ≥2 agreeing pool sources; replaces systemd-timesyncd
+- **AppArmor** — mandatory access control; Docker containers confined by `docker-default` profile
+- **SSH hardening** — key-only authentication, no root login, strong ciphers, no forwarding
+- **SSH MFA** — optional TOTP second factor via `libpam-google-authenticator` (ISO A.8.5)
+- **fail2ban** — progressive bans for SSH brute-force (1 h → 2 h → 4 h → 7 days max)
+- **Audit logging** — auditd with 28+ syscall/file rules, immutable ruleset
+- **File integrity monitoring** — AIDE with daily cron check and email alerts
+- **Automated security updates** — unattended-upgrades (daily, no auto-reboot)
+- **Docker daemon hardening** — `icc=false`, seccomp, optional userns-remap, log limits
+- **Traefik container hardening** — `--cap-drop ALL`, `--cap-add NET_BIND_SERVICE`, `--security-opt no-new-privileges:true`
+- **Container image scanning** — Trivy (`scripts/scan-image.sh`); blocks on CRITICAL CVEs
+- **Per-site isolation** — dedicated user, bridge network, and sudoers file per site
+- **Compose hardening** — deployed site containers should include `cap_drop: [ALL]` and `security_opt: [no-new-privileges:true]`; use `scripts/harden-compose.sh <deploy-dir>` to generate a `docker-compose.override.yml` automatically
+- **GRUB bootloader password** — optional; prevents single-user-mode bypass (CIS 1.4)
+- **Secure secret handling** — `.env` files mode 600; dashboard credentials root-only
 
 ### Logging & Monitoring
 - Automatic log rotation
@@ -347,6 +396,26 @@ This repository works alongside:
 - **dockerBuildfiles**: Provides shared Docker container definitions
 - **KSE-Portal**: Customer sites that use these deployment scripts
 - **serverSetup**: Provides baseline setup scripts
+
+## Security Verification
+
+Quick commands to confirm the hardening posture after setup:
+
+```bash
+sudo ufw status verbose                      # Firewall rules
+chronyc tracking                             # NTP sync status
+sudo aa-status --summary                     # AppArmor profiles loaded
+sudo ausearch -ts today | aureport --summary # Today's audit events
+sudo aide-check                              # File integrity check (after AIDE init)
+sudo fail2ban-client status sshd             # fail2ban SSH jail
+sudo lynis audit system                      # Full CIS benchmark scan
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /etc:/etc:ro \
+  docker/docker-bench-security               # CIS Docker benchmark
+```
+
+See [docs/compliance.md](docs/compliance.md) for the full control mapping and gap analysis.
 
 ## Troubleshooting
 
@@ -502,7 +571,7 @@ sudo apt-get install shellcheck bats
 make test
 
 # Individual targets
-make lint           # shellcheck on all 28 scripts
+make lint           # shellcheck on all 33 scripts
 make test-syntax    # bash -n syntax check for every script
 make test-args      # argument validation for key scripts
 make test-traefik   # comprehensive tests for the Traefik scripts
@@ -515,7 +584,7 @@ make check-deps
 
 | Test file | What it covers |
 |-----------|---------------|
-| `tests/test_syntax.bats` | `bash -n` parse check for all shell scripts |
+| `tests/test_syntax.bats` | `bash -n` parse check for all 33 shell scripts |
 | `tests/test_arg_validation.bats` | Scripts exit non-zero + print usage when required args are missing |
 | `tests/traefik/test_add_site.bats` | 28 tests: validation, config generation, site naming, SSL cert logic, Traefik running check |
 | `tests/traefik/test_remove_site.bats` | 13 tests: removal, site listing, domain-to-name conversion |
