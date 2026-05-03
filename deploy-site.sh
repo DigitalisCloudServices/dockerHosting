@@ -138,8 +138,8 @@ StandardError=journal
 SyslogIdentifier=${svc_name}
 EOF
 
-    # 15-minute poll with up to 60 s random jitter (prevents thundering herd
-    # when multiple sites share the same host)
+    # 15-minute poll with ±5 min random jitter (10-minute window) so that
+    # multiple sites or servers don't hammer GitHub simultaneously.
     cat > "/etc/systemd/system/${svc_name}.timer" <<EOF
 [Unit]
 Description=${site_name} — check for artifact updates every 15 minutes
@@ -147,7 +147,7 @@ Description=${site_name} — check for artifact updates every 15 minutes
 [Timer]
 OnBootSec=2min
 OnCalendar=*:0/15
-RandomizedDelaySec=60
+RandomizedDelaySec=300
 AccuracySec=10
 Persistent=true
 
