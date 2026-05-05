@@ -87,6 +87,7 @@ site's own channel metadata and handled generically by `lib/update-site.sh`.
 | `--mode <production\|development>` | Default: `production` |
 | `--gcs-key-file <path>` | GCS service account JSON key (required in production) |
 | `--gcs-bucket <url>` | GCS bucket URL (default: from site's `.env`) |
+| `--gcs-prefix <path>` | Optional subfolder prefix inside the bucket (for shared buckets) |
 | `--artifact-aes-key-file <path>` | AES-256 key file for artifact decryption |
 | `--artifact-signing-pub-key-file <path>` | RSA public key file for artifact verification |
 | `--deploy-dir <path>` | Deployment directory (default: `/opt/apps/<site-name>`) |
@@ -364,10 +365,10 @@ All sites managed by this tooling share a common GCS artifact pipeline.
 CI (GitHub Actions)
   │  builds artifacts (infra, frontend, wordpress, …)
   │  encrypts + uploads to GCS
-  └► gs://<bucket>/artifacts/<type>-<hash>.tar.gz
+  └► gs://<bucket>/[<prefix>/]artifacts/<type>-<hash>.tar.gz
 
   promotes channel metadata (including lifecycle_hooks from infra/lifecycle-hooks.json)
-  └► gs://<bucket>/channels/prod-latest.json
+  └► gs://<bucket>/[<prefix>/]channels/prod-latest.json
 
 Server (systemd timer → lib/update-site.sh <deploy-dir>)
   │  reads prod-latest.json
@@ -439,6 +440,31 @@ artifact-cache/
 
 The stable paths are written atomically (`cp` + `mv`) so Docker never races with an
 in-progress download and mistakenly creates a directory at that path.
+
+### Shared-bucket prefix (`GCS_PREFIX`)
+
+Multiple projects can share one GCS bucket by scoping each project's paths to a subfolder.
+Pass `--gcs-prefix <path>` to `deploy-site.sh`:
+
+```bash
+sudo ./deploy-site.sh \
+  --site-name mysite \
+  --gcs-key-file /path/to/gcs-sa.json \
+  --gcs-bucket gs://shared-artifacts \
+  --gcs-prefix myproject
+```
+
+With `GCS_PREFIX=myproject` all paths become:
+
+```
+gs://shared-artifacts/myproject/channels/<channel>.json
+gs://shared-artifacts/myproject/artifacts/<file>.tar.gz
+```
+
+The prefix is stored in `.env` as `GCS_PREFIX` and read automatically by `lib/update-site.sh`
+on every update cycle. Omitting `--gcs-prefix` leaves the prefix blank and uses bucket-root
+paths — fully backward compatible with existing single-project deployments.
+Leading and trailing slashes are stripped automatically.
 
 ### `lib/update-site.sh` — generic artifact updater
 

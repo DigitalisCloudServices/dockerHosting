@@ -99,9 +99,14 @@ _dotenv_set() {
 GCS_BUCKET="$(_dotenv_get GCS_BUCKET)"
 [[ -n "${GCS_BUCKET}" ]] || _fail "GCS_BUCKET not set in ${DOTENV} — was deploy-site.sh run?"
 
+GCS_PREFIX="$(_dotenv_get GCS_PREFIX)"
+GCS_PREFIX="${GCS_PREFIX#/}"
+GCS_PREFIX="${GCS_PREFIX%/}"
+GCS_BASE="${GCS_BUCKET}${GCS_PREFIX:+/${GCS_PREFIX}}"
+
 RELEASE_CHANNEL="$(_dotenv_get RELEASE_CHANNEL)"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-main-latest}"
-CHANNEL_URL="${GCS_BUCKET}/channels/${RELEASE_CHANNEL}.json"
+CHANNEL_URL="${GCS_BASE}/channels/${RELEASE_CHANNEL}.json"
 
 cd "${PROJECT_DIR}"
 
@@ -254,7 +259,7 @@ _download_artifact() {
         curl -fsSL --retry 3 --retry-delay 5 \
             -H "Authorization: Bearer ${GCS_TOKEN}" \
             -o "${download_tmp}" \
-            "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${artifact_filename}")"
+            "$(_gcs_https_url "${GCS_BASE}/artifacts/${artifact_filename}")"
 
         _log "${type}: decrypting ${artifact_filename}..."
         local pub_key_file="${PROJECT_DIR}/infra/secrets/artifact_signing_public_key.pem"

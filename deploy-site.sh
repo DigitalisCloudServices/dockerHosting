@@ -25,6 +25,7 @@
 #   --setup-timer <yes|no>   Install systemd updater timer (default: yes for production, no for development)
 #   --non-interactive        Skip all prompts
 #   --gcs-bucket <url>       GCS bucket URL (default: gs://velaair-website-artifacts) [production only]
+#   --gcs-prefix <path>      Optional subfolder prefix inside the bucket for shared-bucket deployments [production only]
 #   --gcs-key-file <path>    Path to GCS service account JSON key file [production only, required]
 #   --channel <name>         Release channel — branch name + qualifier, e.g. main-latest, main-1.2.3 (default: main-latest) [production only]
 #   --ar-registry <host>     Artifact Registry hostname (default: europe-west2-docker.pkg.dev) [production only]
@@ -242,6 +243,7 @@ parse_args() {
     DOMAIN=""
     KONG_PORT=""
     GCS_BUCKET="gs://velaair-website-artifacts"
+    GCS_PREFIX=""
     GCS_KEY_FILE=""
     RELEASE_CHANNEL="main-latest"
     AR_REGISTRY="europe-west2-docker.pkg.dev"
@@ -263,6 +265,7 @@ parse_args() {
             --domain)           DOMAIN="$2";        shift 2 ;;
             --kong-port)        KONG_PORT="$2";     shift 2 ;;
             --gcs-bucket)       GCS_BUCKET="$2";       shift 2 ;;
+            --gcs-prefix)       GCS_PREFIX="$2";       shift 2 ;;
             --gcs-key-file)     GCS_KEY_FILE="$2";    shift 2 ;;
             --channel)          RELEASE_CHANNEL="$2"; shift 2 ;;
             --ar-registry)      AR_REGISTRY="$2";     shift 2 ;;
@@ -335,6 +338,9 @@ gather_interactive() {
         read -rp "GCS bucket URL [${GCS_BUCKET}]: " input
         GCS_BUCKET="${input:-$GCS_BUCKET}"
 
+        read -rp "GCS path prefix (optional, leave blank for bucket root) [${GCS_PREFIX}]: " input
+        GCS_PREFIX="${input:-$GCS_PREFIX}"
+
         read -rp "Release channel [${RELEASE_CHANNEL}]: " input
         RELEASE_CHANNEL="${input:-$RELEASE_CHANNEL}"
 
@@ -387,6 +393,9 @@ apply_defaults() {
     if [[ -z "$SETUP_TIMER" ]]; then
         if [[ "$DEPLOY_MODE" == "development" ]]; then SETUP_TIMER="no"; else SETUP_TIMER="yes"; fi
     fi
+    GCS_PREFIX="${GCS_PREFIX#/}"
+    GCS_PREFIX="${GCS_PREFIX%/}"
+    GCS_BASE="${GCS_BUCKET}${GCS_PREFIX:+/${GCS_PREFIX}}"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -434,6 +443,7 @@ main() {
     printf "  %-20s %s\n" "Domain:"        "${DOMAIN:-(not set)}"
     if [[ "$DEPLOY_MODE" == "production" ]]; then
         printf "  %-20s %s\n" "GCS bucket:"    "$GCS_BUCKET"
+        [[ -n "$GCS_PREFIX" ]] && printf "  %-20s %s\n" "GCS prefix:"    "$GCS_PREFIX"
         printf "  %-20s %s\n" "Channel:"       "$RELEASE_CHANNEL"
         printf "  %-20s %s\n" "GCS key:"       "$GCS_KEY_FILE"
         printf "  %-20s %s\n" "AES key:"       "${ARTIFACT_AES_KEY_FILE:-(not set — encrypted artifacts will fail)}"
@@ -462,6 +472,7 @@ main() {
     printf "    --kong-port '%s' \\\\\n" "$KONG_PORT"
     if [[ "$DEPLOY_MODE" == "production" ]]; then
         printf "    --gcs-bucket '%s' \\\\\n" "$GCS_BUCKET"
+        if [[ -n "$GCS_PREFIX" ]]; then printf "    --gcs-prefix '%s' \\\\\n" "$GCS_PREFIX"; fi
         printf "    --channel '%s' \\\\\n" "$RELEASE_CHANNEL"
         printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
         if [[ -n "$ARTIFACT_AES_KEY_FILE" ]]; then printf "    --artifact-aes-key-file '%s' \\\\\n" "$ARTIFACT_AES_KEY_FILE"; fi
@@ -504,10 +515,10 @@ main() {
         GCS_TOKEN="$(_gcs_access_token "${GCS_KEY_FILE}")" \
             || { log_error "Failed to obtain GCS access token — check service account key"; exit 1; }
 
-        log_info "Fetching ${GCS_BUCKET}/channels/${RELEASE_CHANNEL}.json..."
+        log_info "Fetching ${GCS_BASE}/channels/${RELEASE_CHANNEL}.json..."
         CHANNEL_META="$(curl -fsSL \
             -H "Authorization: Bearer ${GCS_TOKEN}" \
-            "$(_gcs_https_url "${GCS_BUCKET}/channels/${RELEASE_CHANNEL}.json")")"
+            "$(_gcs_https_url "${GCS_BASE}/channels/${RELEASE_CHANNEL}.json")")"
 
         INFRA_ARTIFACT="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra_artifact'])")"
         INFRA_HASH="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_hash',''))")"
@@ -533,7 +544,7 @@ main() {
         curl -fsSL --retry 3 --retry-delay 5 \
             -H "Authorization: Bearer ${GCS_TOKEN}" \
             -o "${infra_tmp}" \
-            "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${INFRA_ARTIFACT}")"
+            "$(_gcs_https_url "${GCS_BASE}/artifacts/${INFRA_ARTIFACT}")"
 
         local decrypt_bootstrap="${SCRIPT_DIR}/lib/decrypt.sh"
         [[ -f "${decrypt_bootstrap}" ]] || { log_error "Bundled decrypt.sh missing: ${decrypt_bootstrap}"; exit 1; }
@@ -670,8 +681,9 @@ main() {
     chown root:root "$env_file"
 
     if [[ "$DEPLOY_MODE" == "production" ]]; then
-        _env_set "GCS_BUCKET"     "$GCS_BUCKET"                           "$env_file"
-        _env_set "RELEASE_CHANNEL" "$RELEASE_CHANNEL"                     "$env_file"
+        _env_set "GCS_BUCKET"      "$GCS_BUCKET"      "$env_file"
+        _env_set "GCS_PREFIX"      "$GCS_PREFIX"      "$env_file"
+        _env_set "RELEASE_CHANNEL" "$RELEASE_CHANNEL" "$env_file"
         _env_set "INFRA_HASH"     "$INFRA_HASH"                           "$env_file"
         _env_set "INFRA_ARTIFACT" "./artifact-cache/${INFRA_ARTIFACT}"    "$env_file"
 
