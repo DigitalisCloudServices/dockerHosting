@@ -51,10 +51,10 @@ cat > /etc/chrony/chrony.conf <<'EOF'
 # Based on: ISO 27001 A.8.17, CIS Benchmark 2.2.1.3
 
 # Use Debian pool NTP servers (HTTPS-validated pool)
-pool 0.debian.pool.ntp.org iburst maxsources 3
-pool 1.debian.pool.ntp.org iburst maxsources 3
-pool 2.debian.pool.ntp.org iburst maxsources 3
-pool 3.debian.pool.ntp.org iburst maxsources 3
+pool 0.debian.pool.ntp.org iburst maxsources 3 minpoll 6 maxpoll 10
+pool 1.debian.pool.ntp.org iburst maxsources 3 minpoll 6 maxpoll 10
+pool 2.debian.pool.ntp.org iburst maxsources 3 minpoll 6 maxpoll 10
+pool 3.debian.pool.ntp.org iburst maxsources 3 minpoll 6 maxpoll 10
 
 # Record the rate at which the system clock gains/loses time
 driftfile /var/lib/chrony/drift
@@ -76,10 +76,6 @@ log measurements statistics tracking
 deny all
 allow 127.0.0.1
 allow ::1
-
-# Reduce the minimum poll interval so chrony converges faster on first sync
-minpoll 6
-maxpoll 10
 
 # Require at least 3 sources to agree before trusting a time update
 # (prevents a single rogue NTP server from skewing the clock)
