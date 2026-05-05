@@ -43,6 +43,9 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=lib/gcs.sh
+source "${SCRIPT_DIR}/lib/gcs.sh"
+
 log_info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
@@ -119,62 +122,6 @@ decrypt_artifact() {
     fi
 }
 
-# ── GCS helpers ──────────────────────────────────────────────────────────────
-# Convert gs://bucket/path → https://storage.googleapis.com/bucket/path
-_gcs_https_url() { printf 'https://storage.googleapis.com/%s' "${1#gs://}"; }
-
-# Exchange a service account JSON key for a short-lived OAuth2 Bearer token.
-# Requires: python3 (stdlib), openssl. No Google Cloud SDK needed.
-_gcs_access_token() {
-    local sa_file="$1"
-    python3 - "$sa_file" <<'PYEOF'
-import sys, json, time, base64, subprocess, urllib.request, urllib.parse, tempfile, os
-
-sa = json.load(open(sys.argv[1]))
-email   = sa['client_email']
-key_pem = sa['private_key']
-
-now = int(time.time())
-
-def b64url(data):
-    if isinstance(data, str):
-        data = data.encode()
-    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
-
-header  = b64url(json.dumps({"alg":"RS256","typ":"JWT"}, separators=(',',':')))
-payload = b64url(json.dumps({
-    "iss":   email,
-    "scope": "https://www.googleapis.com/auth/devstorage.read_only",
-    "aud":   "https://oauth2.googleapis.com/token",
-    "iat":   now,
-    "exp":   now + 3600,
-}, separators=(',',':')))
-
-signing_input = f"{header}.{payload}".encode()
-
-with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as kf:
-    os.chmod(kf.fileno(), 0o600)
-    kf.write(key_pem)
-    key_path = kf.name
-try:
-    sig_bytes = subprocess.check_output(
-        ['openssl', 'dgst', '-sha256', '-sign', key_path],
-        input=signing_input, stderr=subprocess.DEVNULL
-    )
-finally:
-    os.unlink(key_path)
-
-jwt = f"{header}.{payload}.{b64url(sig_bytes)}"
-
-data = urllib.parse.urlencode({
-    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    "assertion":  jwt,
-}).encode()
-resp = urllib.request.urlopen("https://oauth2.googleapis.com/token", data=data)
-print(json.loads(resp.read())['access_token'], end='')
-PYEOF
-}
-
 # ── Systemd timer ─────────────────────────────────────────────────────────────
 
 install_updater_timer() {
@@ -217,6 +164,46 @@ EOF
     systemctl daemon-reload
     systemctl enable --now "${svc_name}.timer"
     log_info "Timer enabled: ${svc_name}.timer (every 15 min, ±5 min jitter)"
+}
+
+install_maintenance_timer() {
+    local site_name="$1"
+    local deploy_dir="$2"
+    local svc_name="${site_name}-maintenance"
+    local update_site="${SCRIPT_DIR}/lib/update-site.sh"
+
+    cat > "/etc/systemd/system/${svc_name}.service" <<EOF
+[Unit]
+Description=${site_name} — daily maintenance hooks (cert renewal, health checks)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=${deploy_dir}
+ExecStart=/bin/bash ${update_site} ${deploy_dir} --trigger update --skip-artifact-download --always-run-hooks
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=${svc_name}
+EOF
+
+    cat > "/etc/systemd/system/${svc_name}.timer" <<EOF
+[Unit]
+Description=${site_name} — run maintenance hooks daily
+
+[Timer]
+OnCalendar=*-*-* 03:05:00
+RandomizedDelaySec=300
+AccuracySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now "${svc_name}.timer"
+    log_info "Timer enabled: ${svc_name}.timer (daily at 03:05)"
 }
 
 add_update_now_sudoers() {
@@ -743,6 +730,7 @@ main() {
 
     if [[ "$SETUP_TIMER" == "yes" ]]; then
         install_updater_timer "$SITE_NAME" "$DEPLOY_DIR"
+        install_maintenance_timer "$SITE_NAME" "$DEPLOY_DIR"
         add_update_now_sudoers "$SITE_USER" "$SITE_NAME" || true
         create_update_now_helper "$SITE_NAME" "${DEPLOY_DIR}/bin" "$SITE_USER"
         log_info "Immediate check: ${DEPLOY_DIR}/bin/update-now"

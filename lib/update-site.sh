@@ -36,7 +36,7 @@ source "${SCRIPT_DIR}/gcs.sh"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
-PROJECT_DIR="${1:?Usage: $0 <deploy-dir> [--trigger bootstrap|update] [--pull-only] [--skip-artifact-download] [--force] [--dry-run]}"
+PROJECT_DIR="${1:?Usage: $0 <deploy-dir> [--trigger bootstrap|update] [--pull-only] [--skip-artifact-download] [--force] [--dry-run] [--always-run-hooks]}"
 shift
 
 TRIGGER="update"
@@ -44,6 +44,7 @@ PULL_ONLY=false
 SKIP_DOWNLOAD=false
 FORCE=false
 DRY_RUN=false
+ALWAYS_RUN_HOOKS=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -51,10 +52,11 @@ while [[ $# -gt 0 ]]; do
             TRIGGER="${2:?--trigger requires a value: bootstrap|update}"
             shift 2
             ;;
-        --pull-only)              PULL_ONLY=true;     shift ;;
-        --skip-artifact-download) SKIP_DOWNLOAD=true; shift ;;
-        --force)                  FORCE=true;         shift ;;
-        --dry-run)                DRY_RUN=true;       shift ;;
+        --pull-only)              PULL_ONLY=true;           shift ;;
+        --skip-artifact-download) SKIP_DOWNLOAD=true;       shift ;;
+        --force)                  FORCE=true;               shift ;;
+        --dry-run)                DRY_RUN=true;             shift ;;
+        --always-run-hooks)       ALWAYS_RUN_HOOKS=true;    shift ;;
         *) echo "ERROR: unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -205,8 +207,15 @@ for _i in "${!ARTIFACT_STALE[@]}"; do
     [[ "${ARTIFACT_STALE[$_i]}" == "true" ]] && _any_stale=true
 done
 
-if [[ "${_any_stale}" == "false" ]]; then
+if [[ "${_any_stale}" == "false" && "${ALWAYS_RUN_HOOKS}" != "true" ]]; then
     _log "All artifacts up to date — nothing to do."
+    exit 0
+fi
+
+if [[ "${_any_stale}" == "false" && "${ALWAYS_RUN_HOOKS}" == "true" ]]; then
+    _log "All artifacts up to date — running hooks only (--always-run-hooks)."
+    _run_hooks "pre-start"
+    _run_hooks "post-start"
     exit 0
 fi
 
