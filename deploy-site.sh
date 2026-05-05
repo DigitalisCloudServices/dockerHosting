@@ -26,6 +26,7 @@
 #   --non-interactive        Skip all prompts
 #   --gcs-bucket <url>       GCS bucket URL (default: gs://velaair-website-artifacts) [production only]
 #   --gcs-key-file <path>    Path to GCS service account JSON key file [production only, required]
+#   --channel <name>         Release channel — branch name + qualifier, e.g. main-latest, main-1.2.3 (default: main-latest) [production only]
 #   --ar-registry <host>     Artifact Registry hostname (default: europe-west2-docker.pkg.dev) [production only]
 #   --artifact-aes-key-file <path>          AES-256 key file for artifact decryption (base64) [production only]
 #   --artifact-signing-pub-key-file <path>  RSA public key file for artifact verification (PEM) [production only]
@@ -110,6 +111,7 @@ decrypt_artifact() {
     if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
         ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
         ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
+        SKIP_ENCRYPTION=false \
         bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
     else
         SKIP_ENCRYPTION=true bash "${decrypt_sh}" \
@@ -179,7 +181,7 @@ install_updater_timer() {
     local site_name="$1"
     local deploy_dir="$2"
     local svc_name="${site_name}-updater"
-    local update_script="${deploy_dir}/infra/bootstrap/update.sh"
+    local update_site="${SCRIPT_DIR}/lib/update-site.sh"
 
     cat > "/etc/systemd/system/${svc_name}.service" <<EOF
 [Unit]
@@ -190,7 +192,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=${deploy_dir}
-ExecStart=/bin/bash ${update_script}
+ExecStart=/bin/bash ${update_site} ${deploy_dir}
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=${svc_name}
@@ -254,6 +256,7 @@ parse_args() {
     KONG_PORT=""
     GCS_BUCKET="gs://velaair-website-artifacts"
     GCS_KEY_FILE=""
+    RELEASE_CHANNEL="main-latest"
     AR_REGISTRY="europe-west2-docker.pkg.dev"
     ARTIFACT_AES_KEY_FILE=""
     ARTIFACT_SIGNING_PUB_KEY_FILE=""
@@ -272,9 +275,10 @@ parse_args() {
             --deploy-dir)       DEPLOY_DIR="$2";    shift 2 ;;
             --domain)           DOMAIN="$2";        shift 2 ;;
             --kong-port)        KONG_PORT="$2";     shift 2 ;;
-            --gcs-bucket)       GCS_BUCKET="$2";    shift 2 ;;
-            --gcs-key-file)     GCS_KEY_FILE="$2";  shift 2 ;;
-            --ar-registry)      AR_REGISTRY="$2";   shift 2 ;;
+            --gcs-bucket)       GCS_BUCKET="$2";       shift 2 ;;
+            --gcs-key-file)     GCS_KEY_FILE="$2";    shift 2 ;;
+            --channel)          RELEASE_CHANNEL="$2"; shift 2 ;;
+            --ar-registry)      AR_REGISTRY="$2";     shift 2 ;;
             --artifact-aes-key-file)         ARTIFACT_AES_KEY_FILE="$2";         shift 2 ;;
             --artifact-signing-pub-key-file) ARTIFACT_SIGNING_PUB_KEY_FILE="$2"; shift 2 ;;
             --create-user)      CREATE_USER="$2";   shift 2 ;;
@@ -344,10 +348,29 @@ gather_interactive() {
         read -rp "GCS bucket URL [${GCS_BUCKET}]: " input
         GCS_BUCKET="${input:-$GCS_BUCKET}"
 
+        read -rp "Release channel [${RELEASE_CHANNEL}]: " input
+        RELEASE_CHANNEL="${input:-$RELEASE_CHANNEL}"
+
         while [[ -z "$GCS_KEY_FILE" || ! -f "$GCS_KEY_FILE" ]]; do
             read -rp "Path to GCS service account JSON key file: " GCS_KEY_FILE
             [[ -f "$GCS_KEY_FILE" ]] || log_warn "File not found: $GCS_KEY_FILE"
         done
+
+        echo ""
+        log_info "Artifact decryption keys (required if artifacts are encrypted):"
+        local input_key
+        read -rp "Path to AES-256 key file (base64) [blank to skip]: " input_key
+        if [[ -n "$input_key" ]]; then
+            [[ -f "$input_key" ]] \
+                && ARTIFACT_AES_KEY_FILE="$input_key" \
+                || log_warn "File not found: $input_key — skipping"
+        fi
+        read -rp "Path to RSA public key file (PEM) [blank to skip]: " input_key
+        if [[ -n "$input_key" ]]; then
+            [[ -f "$input_key" ]] \
+                && ARTIFACT_SIGNING_PUB_KEY_FILE="$input_key" \
+                || log_warn "File not found: $input_key — skipping"
+        fi
     fi
 
     echo ""
@@ -424,7 +447,10 @@ main() {
     printf "  %-20s %s\n" "Domain:"        "${DOMAIN:-(not set)}"
     if [[ "$DEPLOY_MODE" == "production" ]]; then
         printf "  %-20s %s\n" "GCS bucket:"    "$GCS_BUCKET"
+        printf "  %-20s %s\n" "Channel:"       "$RELEASE_CHANNEL"
         printf "  %-20s %s\n" "GCS key:"       "$GCS_KEY_FILE"
+        printf "  %-20s %s\n" "AES key:"       "${ARTIFACT_AES_KEY_FILE:-(not set — encrypted artifacts will fail)}"
+        printf "  %-20s %s\n" "Signing key:"   "${ARTIFACT_SIGNING_PUB_KEY_FILE:-(not set — encrypted artifacts will fail)}"
         printf "  %-20s %s\n" "Updater timer:" "$SETUP_TIMER (15 min ±5)"
     fi
     printf "  %-20s %s\n" "Logrotate:"     "$SETUP_LOGROTATE"
@@ -449,6 +475,7 @@ main() {
     printf "    --kong-port '%s' \\\\\n" "$KONG_PORT"
     if [[ "$DEPLOY_MODE" == "production" ]]; then
         printf "    --gcs-bucket '%s' \\\\\n" "$GCS_BUCKET"
+        printf "    --channel '%s' \\\\\n" "$RELEASE_CHANNEL"
         printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
         if [[ -n "$ARTIFACT_AES_KEY_FILE" ]]; then printf "    --artifact-aes-key-file '%s' \\\\\n" "$ARTIFACT_AES_KEY_FILE"; fi
         if [[ -n "$ARTIFACT_SIGNING_PUB_KEY_FILE" ]]; then printf "    --artifact-signing-pub-key-file '%s' \\\\\n" "$ARTIFACT_SIGNING_PUB_KEY_FILE"; fi
@@ -490,22 +517,15 @@ main() {
         GCS_TOKEN="$(_gcs_access_token "${GCS_KEY_FILE}")" \
             || { log_error "Failed to obtain GCS access token — check service account key"; exit 1; }
 
-        log_info "Fetching ${GCS_BUCKET}/channels/prod-latest.json..."
+        log_info "Fetching ${GCS_BUCKET}/channels/${RELEASE_CHANNEL}.json..."
         CHANNEL_META="$(curl -fsSL \
             -H "Authorization: Bearer ${GCS_TOKEN}" \
-            "$(_gcs_https_url "${GCS_BUCKET}/channels/prod-latest.json")")"
+            "$(_gcs_https_url "${GCS_BUCKET}/channels/${RELEASE_CHANNEL}.json")")"
 
-        INFRA_ARTIFACT="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin)['infra_artifact'])")"
-        FRONTEND_ARTIFACT="$(echo "${CHANNEL_META}"  | python3 -c "import json,sys; print(json.load(sys.stdin)['frontend_artifact'])")"
-        WORDPRESS_ARTIFACT="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['wordpress_artifact'])")"
-        INFRA_HASH="$(echo "${CHANNEL_META}"         | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_hash',''))")"
-        FRONTEND_HASH="$(echo "${CHANNEL_META}"      | python3 -c "import json,sys; print(json.load(sys.stdin)['frontend_git_hash'])")"
-        WORDPRESS_HASH="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin)['wordpress_git_hash'])")"
+        INFRA_ARTIFACT="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra_artifact'])")"
+        INFRA_HASH="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_hash',''))")"
 
-        log_info "Channel metadata:"
-        log_info "  infra:     ${INFRA_ARTIFACT}"
-        log_info "  frontend:  ${FRONTEND_ARTIFACT}"
-        log_info "  wordpress: ${WORDPRESS_ARTIFACT}"
+        log_info "Channel metadata: infra=${INFRA_ARTIFACT}"
     else
         log_step "2/8  GCS channel metadata (skipped — development mode)"
     fi
@@ -578,6 +598,7 @@ main() {
 
         log_info "Skeleton created at ${DEPLOY_DIR}"
         log_note "Copy your docker-compose.yml and config directories into ${DEPLOY_DIR}/"
+        log_note "Then run: sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap"
     fi
 
     # ════════════════════════════════════════════════════════════════════════
@@ -653,7 +674,8 @@ main() {
     local env_file="${DEPLOY_DIR}/.env"
     if [[ ! -f "$env_file" ]]; then touch "$env_file"; fi
 
-    _env_set "KONG_HTTPS_PORT" "$KONG_PORT" "$env_file"
+    _env_set "KONG_HTTPS_PORT" "$KONG_PORT"    "$env_file"
+    _env_set "DEPLOY_MODE"    "$DEPLOY_MODE"  "$env_file"
     if [[ -n "$DOMAIN" ]]; then _env_set "SITE_HOSTNAME" "$DOMAIN" "$env_file"; fi
     if [[ "$DEPLOY_MODE" == "production" ]]; then _env_set "AR_REGISTRY" "$AR_REGISTRY" "$env_file"; fi
 
@@ -661,41 +683,19 @@ main() {
     chown root:root "$env_file"
 
     if [[ "$DEPLOY_MODE" == "production" ]]; then
-        _env_set "INFRA_HASH"         "$INFRA_HASH"    "$env_file"
-        _env_set "INFRA_ARTIFACT"     "./artifact-cache/${INFRA_ARTIFACT}" "$env_file"
-        _env_set "FRONTEND_GIT_HASH"  "$FRONTEND_HASH" "$env_file"
-        _env_set "WORDPRESS_GIT_HASH" "$WORDPRESS_HASH" "$env_file"
+        _env_set "GCS_BUCKET"     "$GCS_BUCKET"                           "$env_file"
+        _env_set "RELEASE_CHANNEL" "$RELEASE_CHANNEL"                     "$env_file"
+        _env_set "INFRA_HASH"     "$INFRA_HASH"                           "$env_file"
+        _env_set "INFRA_ARTIFACT" "./artifact-cache/${INFRA_ARTIFACT}"    "$env_file"
 
-        log_info "Downloading frontend artifact..."
-        curl -fsSL --retry 3 --retry-delay 5 \
-            -H "Authorization: Bearer ${GCS_TOKEN}" \
-            -o "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download" \
-            "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${FRONTEND_ARTIFACT}")"
-        decrypt_artifact \
-            "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download" \
-            "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}" \
-            "${SCRIPT_DIR}/lib/decrypt.sh" \
-            "${DEPLOY_DIR}/infra/secrets"
-        rm -f "${DEPLOY_DIR}/artifact-cache/${FRONTEND_ARTIFACT}.download"
-        _env_set "FRONTEND_ARTIFACT" "./artifact-cache/${FRONTEND_ARTIFACT}" "$env_file"
-
-        log_info "Downloading wordpress artifact..."
-        curl -fsSL --retry 3 --retry-delay 5 \
-            -H "Authorization: Bearer ${GCS_TOKEN}" \
-            -o "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download" \
-            "$(_gcs_https_url "${GCS_BUCKET}/artifacts/${WORDPRESS_ARTIFACT}")"
-        decrypt_artifact \
-            "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download" \
-            "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}" \
-            "${SCRIPT_DIR}/lib/decrypt.sh" \
-            "${DEPLOY_DIR}/infra/secrets"
-        rm -f "${DEPLOY_DIR}/artifact-cache/${WORDPRESS_ARTIFACT}.download"
-        _env_set "WORDPRESS_ARTIFACT" "./artifact-cache/${WORDPRESS_ARTIFACT}" "$env_file"
-
-        log_info "All artifacts downloaded"
+        log_info "Running initial artifact download and stack start..."
+        local update_site="${SCRIPT_DIR}/lib/update-site.sh"
+        [[ -f "${update_site}" ]] || { log_error "update-site.sh not found at ${update_site}"; exit 1; }
+        bash "${update_site}" "${DEPLOY_DIR}" --trigger bootstrap \
+            || { log_error "update-site.sh failed — check logs above"; exit 1; }
     else
         log_info ".env written with infrastructure settings"
-        log_note "Set FRONTEND_ARTIFACT and WORDPRESS_ARTIFACT in ${env_file} once files are copied"
+        log_note "Copy site files to ${DEPLOY_DIR}/, then run: sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap"
     fi
 
     # ════════════════════════════════════════════════════════════════════════
@@ -765,15 +765,14 @@ main() {
     echo ""
     log_info "Next steps:"
     if [[ "$DEPLOY_MODE" == "development" ]]; then
-        echo "  1. Copy files:       scp/sftp docker-compose.yml + config dirs → ${DEPLOY_DIR}/"
-        echo "  2. Edit .env:        ${DEPLOY_DIR}/.env"
-        echo "     (add FRONTEND_ARTIFACT, WORDPRESS_ARTIFACT, and any app secrets)"
-        echo "  3. Start stack:      cd ${DEPLOY_DIR} && docker compose up -d"
+        echo "  1. Copy files:  scp/sftp docker-compose.yml + infra/ → ${DEPLOY_DIR}/"
+        echo "  2. Edit .env:   ${DEPLOY_DIR}/.env  (add app secrets as needed)"
+        echo "  3. Start:       sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap"
     else
-        echo "  1. Review .env:      ${DEPLOY_DIR}/.env"
-        echo "  2. Start stack:      cd ${DEPLOY_DIR} && docker compose up -d"
+        echo "  1. Stack is running — update-site.sh downloaded artifacts and started services"
+        echo "  2. Review .env: ${DEPLOY_DIR}/.env"
         if [[ "$SETUP_TIMER" == "yes" ]]; then
-            echo "  3. Check updates:    ${DEPLOY_DIR}/bin/update-now"
+            echo "  3. Updates:     ${DEPLOY_DIR}/bin/update-now  (timer also runs every 15 min)"
         fi
     fi
     echo ""
