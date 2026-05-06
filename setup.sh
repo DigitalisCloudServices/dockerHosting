@@ -31,17 +31,10 @@ DOCKERHOSTING_REPO="https://github.com/DigitalisCloudServices/dockerHosting.git"
 DOCKERHOSTING_DIR="/opt/dockerHosting"
 
 # Log functions
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+_ts()       { date -u +%Y-%m-%dT%H:%M:%SZ; }
+log_info()  { echo -e "${GREEN}[INFO]${NC}  [$(_ts)] $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC}  [$(_ts)] $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} [$(_ts)] $1"; }
 
 # Check if running as root
 check_root() {

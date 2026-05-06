@@ -75,6 +75,8 @@ _log()  { echo "  [update] [$(_ts)] $*"; }
 _warn() { echo "  [update] [$(_ts)] WARN: $*" >&2; }
 _fail() { echo "FATAL [update]: $*" >&2; exit 1; }
 
+_START_TS=$(date +%s)
+
 _dotenv_get() {
     local key="$1"
     [[ -f "${DOTENV}" ]] || return 1
@@ -109,6 +111,8 @@ RELEASE_CHANNEL="${RELEASE_CHANNEL:-main-latest}"
 CHANNEL_URL="${GCS_BASE}/channels/${RELEASE_CHANNEL}.json"
 
 cd "${PROJECT_DIR}"
+
+_log "Starting: trigger=${TRIGGER} force=${FORCE} dry-run=${DRY_RUN} pull-only=${PULL_ONLY}"
 
 # ── Lifecycle hooks ───────────────────────────────────────────────────────────
 
@@ -242,6 +246,8 @@ _download_artifact() {
     local type="$1" artifact_filename="$2"
     local dest="${ARTIFACT_CACHE}/${artifact_filename}"
     local stable="${ARTIFACT_CACHE}/${type}.tar.gz"
+
+    _log "${type}: _download_artifact ${artifact_filename}"
 
     # Docker creates a directory at the bind-mount path if the file doesn't
     # exist when the container starts. Remove it so the download can proceed.
@@ -416,5 +422,24 @@ fi
 # Run post-start lifecycle hooks
 _run_hooks "post-start"
 
-_log "Update complete."
+_log "Update complete in $(( $(date +%s) - _START_TS ))s."
 docker compose ps
+
+_unhealthy=$(docker compose ps --format json 2>/dev/null \
+    | python3 -c "
+import json, sys
+bad = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        s = json.loads(line)
+        state  = s.get('State', '')
+        health = s.get('Health', '')
+        name   = s.get('Name') or s.get('Service', '')
+        if state != 'running' or health == 'unhealthy':
+            bad.append(f'{name}({state}/{health})')
+    except: pass
+print(' '.join(bad))
+" 2>/dev/null || true)
+[[ -n "${_unhealthy}" ]] && _warn "Unhealthy/exited services: ${_unhealthy}"

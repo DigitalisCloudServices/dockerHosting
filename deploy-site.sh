@@ -42,6 +42,8 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/gcs.sh
@@ -50,7 +52,7 @@ source "${SCRIPT_DIR}/lib/gcs.sh"
 log_info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_step()  { echo -e "${BLUE}[STEP]${NC}  $1"; }
+log_step()  { echo -e "${BLUE}[STEP]${NC}  [$(_ts)] $1"; }
 log_note()  { echo -e "${CYAN}[NOTE]${NC}  $1"; }
 
 check_root() {
@@ -401,6 +403,7 @@ apply_defaults() {
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 main() {
+    _DEPLOY_START=$(date +%s)
     display_banner
     check_root "$@"
     parse_args "$@"
@@ -692,6 +695,23 @@ main() {
         [[ -f "${update_site}" ]] || { log_error "update-site.sh not found at ${update_site}"; exit 1; }
         bash "${update_site}" "${DEPLOY_DIR}" --trigger bootstrap \
             || { log_error "update-site.sh failed — check logs above"; exit 1; }
+
+        _bad=$(cd "${DEPLOY_DIR}" && docker compose ps --format json 2>/dev/null \
+            | python3 -c "
+import json, sys
+bad = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        s = json.loads(line)
+        n = s.get('Name') or s.get('Service', '')
+        if s.get('State') != 'running' or s.get('Health') == 'unhealthy':
+            bad.append(n)
+    except: pass
+print(' '.join(bad))
+" 2>/dev/null || true)
+        [[ -n "${_bad}" ]] && log_warn "Post-deploy health check: these services are not running/healthy: ${_bad}"
     else
         log_info ".env written with infrastructure settings"
         log_note "Copy site files to ${DEPLOY_DIR}/, then run: sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap"
@@ -762,6 +782,7 @@ main() {
     printf "  %-20s %s\n" "System user:" "$SITE_USER (nologin)"
     if [[ -n "$DOMAIN" ]]; then printf "  %-20s %s\n" "Domain:" "$DOMAIN"; fi
     printf "  %-20s %s\n" "Kong port:" "$KONG_PORT"
+    printf "  %-20s %s\n" "Elapsed:" "$(( $(date +%s) - _DEPLOY_START ))s"
     echo ""
     log_info "Next steps:"
     if [[ "$DEPLOY_MODE" == "development" ]]; then
