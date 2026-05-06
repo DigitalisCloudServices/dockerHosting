@@ -543,13 +543,13 @@ else
 fi
 
 _log "Pulling container images..."
-docker compose pull --quiet --ignore-pull-failures
+docker compose -f "${PROJECT_DIR}/docker-compose.yml" pull --quiet --ignore-pull-failures
 
 # Return all service names whose `artifact` label matches the given artifact name.
 # Requires Docker Compose v2.15+ for --format json.
 _services_for_artifact() {
     local artifact_name="$1"
-    docker compose config --format json 2>/dev/null \
+    docker compose -f "${PROJECT_DIR}/docker-compose.yml" config --format json 2>/dev/null \
         | python3 -c "
 import json, sys
 config = json.load(sys.stdin)
@@ -565,7 +565,7 @@ for svc, cfg in config.get('services', {}).items():
 
 if [[ "${INFRA_STALE}" == "true" ]]; then
     _log "Infra updated — restarting all services"
-    docker compose up -d --force-recreate
+    docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d --force-recreate
 else
     STALE_SERVICES=()
     for _i in "${!ARTIFACT_NAMES[@]}"; do
@@ -577,7 +577,7 @@ else
     done
     if [[ ${#STALE_SERVICES[@]} -gt 0 ]]; then
         _log "Restarting stale services: ${STALE_SERVICES[*]}"
-        docker compose up -d --force-recreate "${STALE_SERVICES[@]}"
+        docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d --force-recreate "${STALE_SERVICES[@]}"
     else
         _warn "No labeled services found for stale artifacts — check 'artifact:' labels in docker-compose.yml"
     fi
@@ -587,9 +587,9 @@ fi
 _run_hooks "post-start"
 
 _log "Update complete in $(( $(date +%s) - _START_TS ))s."
-docker compose ps
+docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps
 
-_unhealthy=$(docker compose ps --format json 2>/dev/null \
+_unhealthy=$(docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --format json 2>/dev/null \
     | python3 -c "
 import json, sys
 bad = []

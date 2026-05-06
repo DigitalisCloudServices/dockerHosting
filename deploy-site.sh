@@ -844,7 +844,7 @@ main() {
         bash "${update_site}" "${DEPLOY_DIR}" --trigger bootstrap \
             || { log_error "update-site.sh failed — check logs above"; exit 1; }
 
-        _bad=$(cd "${DEPLOY_DIR}" && docker compose ps --format json 2>/dev/null \
+        _bad=$(docker compose -f "${DEPLOY_DIR}/docker-compose.yml" ps --format json 2>/dev/null \
             | python3 -c "
 import json, sys
 bad = []
