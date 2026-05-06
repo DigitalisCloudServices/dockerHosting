@@ -702,7 +702,7 @@ main() {
                 fi
                 if [[ -n "${ARTIFACT_SIGNING_PUB_KEY_FILE}" && -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
                     cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-                    chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+                    chmod 644 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
                     chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
                 fi
                 
@@ -792,7 +792,7 @@ main() {
         if [[ -n "${ARTIFACT_SIGNING_PUB_KEY_FILE}" && -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
             if [[ ! -f "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem" ]]; then
                 cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-                chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+                chmod 644 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
                 chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
                 log_info "Signing key  → infra/secrets/artifact_signing_public_key.pem"
             fi
