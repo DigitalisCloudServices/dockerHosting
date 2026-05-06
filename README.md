@@ -730,6 +730,32 @@ Common issues:
 - **Authentication failed**: Verify username/password are correct
 - **Blocked port**: Some ISPs block outbound port 25, use 587 instead
 
+### Artifact Decryption Key Errors
+
+If deployment fails with "Artifact requires encryption and signing but keys not found":
+
+```bash
+# Verify key files exist and are readable
+ls -lh /root/aes.key /root/pub.pem
+
+# Check the files contain valid key material (not empty)
+wc -l /root/aes.key /root/pub.pem
+
+# Ensure you're passing the correct paths
+sudo ./deploy-site.sh \
+  --artifact-aes-key-file /root/aes.key \
+  --artifact-signing-pub-key-file /root/pub.pem \
+  ... # other required flags
+```
+
+Common issues:
+- **Wrong file paths**: Ensure paths are absolute and files exist
+- **Empty key files**: Keys must contain valid base64 (AES) or PEM (RSA) formatted data
+- **Permission errors**: Key files should be readable by root (the script runs as root)
+- **Keys not provided**: If artifacts are encrypted/signed, both keys are required
+
+The script copies these keys to `${DEPLOY_DIR}/infra/secrets/` during deployment. Subsequent updates read from that location.
+
 ### Artifact update fails / container not starting
 
 ```bash
