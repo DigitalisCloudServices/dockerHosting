@@ -151,6 +151,9 @@ for h in json.load(sys.stdin):
 ARTIFACT_NAMES=()
 ARTIFACT_FILES=()
 ARTIFACT_HASHES=()
+ARTIFACT_STORAGE_CONFIGS=()
+ARTIFACT_SIGNED=()
+ARTIFACT_ENCRYPTED=()
 
 if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
     _log "Fetching channel metadata from GCS..."
@@ -162,25 +165,74 @@ if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
         -H "Authorization: Bearer ${GCS_TOKEN}" \
         "$(_gcs_https_url "${CHANNEL_URL}")")"
 
-    CHANNEL_INFRA_HASH="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_hash',''))")"
-    CHANNEL_INFRA_ARTIFACT="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_artifact',''))")"
+    # Parse new structured infra metadata
+    CHANNEL_INFRA_HASH="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra']['git_hash'])")"
+    CHANNEL_INFRA_SIGNED="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra'].get('signed', True))" | tr '[:upper:]' '[:lower:]')"
+    CHANNEL_INFRA_ENCRYPTED="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra'].get('encrypted', True))" | tr '[:upper:]' '[:lower:]')"
+    CHANNEL_INFRA_STORAGE="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; d=json.load(sys.stdin)['infra']; print(json.dumps({k:v for k,v in d.items() if k in ('type','bucket','path','directory','url')}))")"
+    
+    # Extract filename from storage config
+    CHANNEL_INFRA_ARTIFACT="$(python3 - "${CHANNEL_INFRA_STORAGE}" <<'PYEOF'
+import json, sys, os
+storage = json.loads(sys.argv[1])
+storage_type = storage.get('type', 'gcs')
+if storage_type == 'local':
+    dir_path = storage['directory'].rstrip('/')
+    print(os.path.basename(dir_path))
+elif storage_type == 'gcs':
+    if 'path' in storage:
+        print(os.path.basename(storage['path']))
+    else:
+        sys.exit("GCS storage requires 'path' field")
+elif storage_type in ('http', 'https'):
+    print(os.path.basename(storage['url']))
+PYEOF
+)"
 
-    readarray -t ARTIFACT_NAMES  < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a['name'])     for a in json.load(sys.stdin).get('artifacts',[])]")
-    readarray -t ARTIFACT_FILES  < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a['artifact']) for a in json.load(sys.stdin).get('artifacts',[])]")
+    # Parse artifacts array
+    readarray -t ARTIFACT_NAMES  < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a['name']) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_HASHES < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a['git_hash']) for a in json.load(sys.stdin).get('artifacts',[])]")
+    readarray -t ARTIFACT_SIGNED < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(str(a.get('signed', True)).lower()) for a in json.load(sys.stdin).get('artifacts',[])]")
+    readarray -t ARTIFACT_ENCRYPTED < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(str(a.get('encrypted', True)).lower()) for a in json.load(sys.stdin).get('artifacts',[])]")
+    readarray -t ARTIFACT_STORAGE_CONFIGS < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(json.dumps({k:v for k,v in a.items() if k in ('type','bucket','path','directory','url')})) for a in json.load(sys.stdin).get('artifacts',[])]")
+    
+    # Extract filenames from storage configs
+    for _storage in "${ARTIFACT_STORAGE_CONFIGS[@]}"; do
+        _filename="$(python3 - "${_storage}" <<'PYEOF'
+import json, sys, os
+storage = json.loads(sys.argv[1])
+storage_type = storage.get('type', 'gcs')
+if storage_type == 'local':
+    dir_path = storage['directory'].rstrip('/')
+    print(os.path.basename(dir_path))
+elif storage_type == 'gcs':
+    if 'path' in storage:
+        print(os.path.basename(storage['path']))
+    else:
+        sys.exit("GCS storage requires 'path' field")
+elif storage_type in ('http', 'https'):
+    print(os.path.basename(storage['url']))
+PYEOF
+)"
+        ARTIFACT_FILES+=("${_filename}")
+    done
 
     [[ -n "${CHANNEL_INFRA_ARTIFACT}" ]] \
-        || _fail "channel metadata is missing infra_artifact — trigger a new CI build and re-run."
+        || _fail "channel metadata is missing infra — trigger a new CI build and re-run."
 
-    _log "Channel: infra=${CHANNEL_INFRA_HASH:0:12}  artifacts=(${ARTIFACT_NAMES[*]:-none})"
+    _log "Channel: infra=${CHANNEL_INFRA_HASH:0:12} (signed=${CHANNEL_INFRA_SIGNED}, encrypted=${CHANNEL_INFRA_ENCRYPTED})  artifacts=(${ARTIFACT_NAMES[*]:-none})"
 else
     CHANNEL_INFRA_HASH="$(_dotenv_get INFRA_HASH || echo '')"
+    CHANNEL_INFRA_SIGNED="$(_dotenv_get INFRA_SIGNED || echo 'true')"
+    CHANNEL_INFRA_ENCRYPTED="$(_dotenv_get INFRA_ENCRYPTED || echo 'true')"
     CHANNEL_INFRA_ARTIFACT="$(basename "$(_dotenv_get INFRA_ARTIFACT || echo '')")"
     _names_csv="$(_dotenv_get ARTIFACT_NAMES || echo '')"
     if [[ -n "${_names_csv}" ]]; then
         IFS=',' read -ra ARTIFACT_NAMES <<< "${_names_csv}"
         for _n in "${ARTIFACT_NAMES[@]}"; do
             ARTIFACT_HASHES+=("$(_dotenv_get "${_n^^}_GIT_HASH" || echo '')")
+            ARTIFACT_SIGNED+=("$(_dotenv_get "${_n^^}_SIGNED" || echo 'true')")
+            ARTIFACT_ENCRYPTED+=("$(_dotenv_get "${_n^^}_ENCRYPTED" || echo 'true')")
         done
     fi
     _log "Skip-download mode: using pinned data from .env"
@@ -243,22 +295,93 @@ fi
 mkdir -p "${ARTIFACT_CACHE}"
 
 _download_artifact() {
-    local type="$1" artifact_filename="$2"
-    local artifact_basename download_url
+    local type="$1" storage_json="$2" signed="$3" encrypted="$4"
     
-    # Extract filename and construct download URL based on metadata format
-    if [[ "${artifact_filename}" =~ ^(https?|gs):// ]]; then
-        artifact_basename="$(basename "${artifact_filename}")"
-        download_url="$(_gcs_https_url "${artifact_filename}")"
-    else
-        artifact_basename="${artifact_filename}"
-        download_url="$(_gcs_https_url "${GCS_BASE}/artifacts/${artifact_filename}")"
+    # Check if this is a local directory
+    local is_local
+    is_local="$(python3 - "${storage_json}" <<'PYEOF'
+import json, sys
+storage = json.loads(sys.argv[1])
+print("true" if storage.get('type') == 'local' and 'directory' in storage else "false")
+PYEOF
+)"
+    
+    if [[ "${is_local}" == "true" ]]; then
+        # Local directory mode - create symlink in cache
+        local local_dir
+        local_dir="$(python3 - "${storage_json}" <<'PYEOF'
+import json, sys
+storage = json.loads(sys.argv[1])
+print(storage['directory'])
+PYEOF
+)"
+        
+        local artifact_basename
+        artifact_basename="$(python3 - "${storage_json}" <<'PYEOF'
+import json, sys, os
+storage = json.loads(sys.argv[1])
+print(os.path.basename(storage['directory'].rstrip('/')))
+PYEOF
+)"
+        
+        local symlink="${ARTIFACT_CACHE}/${type}"
+        
+        _log "${type}: using local directory ${local_dir}"
+        
+        if [[ ! -d "${local_dir}" ]]; then
+            _fail "${type}: local directory does not exist: ${local_dir}"
+        fi
+        
+        # Create or update symlink
+        rm -f "${symlink}"
+        ln -sf "${local_dir}" "${symlink}"
+        
+        _log "${type}: symlinked ${symlink} -> ${local_dir}"
+        return 0
     fi
+    
+    # Construct download URL from storage config
+    local download_url
+    download_url="$(python3 - "${storage_json}" <<'PYEOF'
+import json, sys
+storage = json.loads(sys.argv[1])
+storage_type = storage.get('type', 'gcs')
+
+if storage_type == 'gcs':
+    bucket = storage['bucket'].lstrip('gs://')
+    if 'path' in storage:
+        path = storage['path']
+    else:
+        sys.exit("GCS storage requires 'path' field")
+    print(f"https://storage.googleapis.com/{bucket}/{path}")
+elif storage_type in ('http', 'https'):
+    print(storage['url'])
+else:
+    sys.exit(f"Unsupported storage type: {storage_type}")
+PYEOF
+)"
+    
+    # Extract filename from storage config
+    local artifact_basename
+    artifact_basename="$(python3 - "${storage_json}" <<'PYEOF'
+import json, sys, os
+storage = json.loads(sys.argv[1])
+storage_type = storage.get('type', 'gcs')
+
+if storage_type == 'gcs':
+    if 'path' in storage:
+        print(os.path.basename(storage['path']))
+    else:
+        sys.exit("GCS storage requires 'path' field")
+elif storage_type in ('http', 'https'):
+    print(os.path.basename(storage['url']))
+PYEOF
+)"
     
     local dest="${ARTIFACT_CACHE}/${artifact_basename}"
     local stable="${ARTIFACT_CACHE}/${type}.tar.gz"
 
-    _log "${type}: _download_artifact ${artifact_basename}"
+    _log "${type}: downloading ${artifact_basename} (signed=${signed}, encrypted=${encrypted})"
 
     # Docker creates a directory at the bind-mount path if the file doesn't
     # exist when the container starts. Remove it so the download can proceed.
@@ -270,7 +393,7 @@ _download_artifact() {
     if [[ -f "${dest}" ]]; then
         _log "${type}: cache hit — ${artifact_basename}"
     else
-        _log "${type}: downloading ${artifact_basename} from GCS..."
+        _log "${type}: downloading ${artifact_basename}..."
         local download_tmp="${dest}.download"
         
         curl -fsSL --retry 3 --retry-delay 5 \
@@ -278,18 +401,43 @@ _download_artifact() {
             -o "${download_tmp}" \
             "${download_url}"
 
-        _log "${type}: decrypting ${artifact_basename}..."
+        _log "${type}: verifying and decrypting ${artifact_basename}..."
         local pub_key_file="${PROJECT_DIR}/infra/secrets/artifact_signing_public_key.pem"
         local aes_key_file="${PROJECT_DIR}/infra/secrets/artifact_aes_key.txt"
-        if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
-            ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
-            ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
-            SKIP_ENCRYPTION=false \
-            bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
+        
+        if [[ "${encrypted}" == "true" && "${signed}" == "true" ]]; then
+            if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
+                ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
+                ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
+                SKIP_ENCRYPTION=false \
+                SKIP_SIGNATURE=false \
+                bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
+            else
+                _fail "${type}: artifact requires encryption and signing but keys not found"
+            fi
+        elif [[ "${encrypted}" == "true" ]]; then
+            if [[ -f "${aes_key_file}" ]]; then
+                ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
+                SKIP_ENCRYPTION=false \
+                SKIP_SIGNATURE=true \
+                bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
+            else
+                _fail "${type}: artifact requires encryption but AES key not found"
+            fi
+        elif [[ "${signed}" == "true" ]]; then
+            if [[ -f "${pub_key_file}" ]]; then
+                ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
+                SKIP_ENCRYPTION=true \
+                SKIP_SIGNATURE=false \
+                bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
+            else
+                _fail "${type}: artifact requires signing but public key not found"
+            fi
         else
-            SKIP_ENCRYPTION=true bash "${DECRYPT_SH}" \
-                --bundle "${download_tmp}" --out-tar "${dest}"
+            SKIP_ENCRYPTION=true SKIP_SIGNATURE=true \
+                bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
         fi
+        
         rm -f "${download_tmp}"
         chmod 444 "${dest}"
 
@@ -335,10 +483,10 @@ _write_to_artifact_volume() {
 }
 
 if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
-    [[ "${INFRA_STALE}" == "true" ]] && _download_artifact infra "${CHANNEL_INFRA_ARTIFACT}"
+    [[ "${INFRA_STALE}" == "true" ]] && _download_artifact infra "${CHANNEL_INFRA_STORAGE}" "${CHANNEL_INFRA_SIGNED}" "${CHANNEL_INFRA_ENCRYPTED}"
     for _i in "${!ARTIFACT_NAMES[@]}"; do
         if [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]]; then
-            _download_artifact "${ARTIFACT_NAMES[$_i]}" "${ARTIFACT_FILES[$_i]}"
+            _download_artifact "${ARTIFACT_NAMES[$_i]}" "${ARTIFACT_STORAGE_CONFIGS[$_i]}" "${ARTIFACT_SIGNED[$_i]}" "${ARTIFACT_ENCRYPTED[$_i]}"
             _write_to_artifact_volume "${ARTIFACT_NAMES[$_i]}"
         fi
     done
@@ -356,15 +504,20 @@ fi
 if [[ "${INFRA_STALE}" == "true" ]]; then
     _log "Extracting infra artifact to ${PROJECT_DIR}..."
     tar -xzf "${ARTIFACT_CACHE}/${CHANNEL_INFRA_ARTIFACT}" --strip-components=1 -C "${PROJECT_DIR}"
-    _dotenv_set INFRA_HASH     "${CHANNEL_INFRA_HASH}"
-    _dotenv_set INFRA_ARTIFACT "./artifact-cache/${CHANNEL_INFRA_ARTIFACT}"
+    _dotenv_set INFRA_HASH      "${CHANNEL_INFRA_HASH}"
+    _dotenv_set INFRA_SIGNED    "${CHANNEL_INFRA_SIGNED}"
+    _dotenv_set INFRA_ENCRYPTED "${CHANNEL_INFRA_ENCRYPTED}"
+    _dotenv_set INFRA_ARTIFACT  "./artifact-cache/${CHANNEL_INFRA_ARTIFACT}"
 fi
 
 # ── Update .env ───────────────────────────────────────────────────────────────
 
 for _i in "${!ARTIFACT_NAMES[@]}"; do
-    [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]] \
-        && _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_GIT_HASH" "${ARTIFACT_HASHES[$_i]}"
+    if [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]]; then
+        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_GIT_HASH"   "${ARTIFACT_HASHES[$_i]}"
+        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_SIGNED"     "${ARTIFACT_SIGNED[$_i]}"
+        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_ENCRYPTED"  "${ARTIFACT_ENCRYPTED[$_i]}"
+    fi
 done
 
 # Persist artifact names so --skip-artifact-download works offline

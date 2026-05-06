@@ -49,12 +49,13 @@ done
     { echo "ERROR: bundle not found: ${BUNDLE_PATH}" >&2; exit 2; }
 
 SKIP_ENCRYPTION="${SKIP_ENCRYPTION:-true}"
+SKIP_SIGNATURE="${SKIP_SIGNATURE:-true}"
 
-# ── Skip-encryption mode ─────────────────────────────────────────────────────
+# ── Skip-crypto mode ──────────────────────────────────────────────────────────
 # The bundle is the content tar directly — copy or extract without crypto.
 
-if [[ "${SKIP_ENCRYPTION}" == "true" ]]; then
-    echo "==> Staging ${BUNDLE_PATH} (skip-encryption mode)"
+if [[ "${SKIP_ENCRYPTION}" == "true" && "${SKIP_SIGNATURE}" == "true" ]]; then
+    echo "==> Staging ${BUNDLE_PATH} (skip-encryption and skip-signature mode)"
 
     GIT_HASH="$(tar xzf "${BUNDLE_PATH}" -O manifest.json 2>/dev/null \
         | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('git_hash','unknown'))" \
@@ -76,19 +77,19 @@ if [[ "${SKIP_ENCRYPTION}" == "true" ]]; then
     exit 0
 fi
 
-# ── Full-crypto mode ──────────────────────────────────────────────────────────
+# ── Crypto mode (signed and/or encrypted) ────────────────────────────────────
 
-if [[ -z "${ARTIFACT_AES_KEY:-}" ]]; then
+if [[ "${SKIP_ENCRYPTION}" == "false" && -z "${ARTIFACT_AES_KEY:-}" ]]; then
     [[ -f /run/secrets/artifact_aes_key ]] \
         && ARTIFACT_AES_KEY="$(cat /run/secrets/artifact_aes_key)" \
         || { [[ "${DRY_RUN}" == "true" ]] && ARTIFACT_AES_KEY="" \
-             || { echo "ERROR: ARTIFACT_AES_KEY required" >&2; exit 2; }; }
+             || { echo "ERROR: ARTIFACT_AES_KEY required for encrypted artifacts" >&2; exit 2; }; }
 fi
 
-if [[ -z "${ARTIFACT_SIGNING_PUBLIC_KEY:-}" ]]; then
+if [[ "${SKIP_SIGNATURE}" == "false" && -z "${ARTIFACT_SIGNING_PUBLIC_KEY:-}" ]]; then
     [[ -f /run/secrets/artifact_signing_public_key ]] \
         && ARTIFACT_SIGNING_PUBLIC_KEY="$(cat /run/secrets/artifact_signing_public_key)" \
-        || { echo "ERROR: ARTIFACT_SIGNING_PUBLIC_KEY required" >&2; exit 2; }
+        || { echo "ERROR: ARTIFACT_SIGNING_PUBLIC_KEY required for signed artifacts" >&2; exit 2; }
 fi
 
 WORK_DIR="$(mktemp -d)"
@@ -114,14 +115,18 @@ d = json.load(open('${MANIFEST}'))
 print(d.get('encryption', {}).get('format_version', 1) if d.get('encryption') else 1)
 ")"
 
-echo "  Verifying RSA-SHA256 signature..."
-PUBLIC_KEY_FILE="${WORK_DIR}/signing_pub.key"
-printf '%s' "${ARTIFACT_SIGNING_PUBLIC_KEY}" > "${PUBLIC_KEY_FILE}"
+if [[ "${SKIP_SIGNATURE}" == "false" ]]; then
+    echo "  Verifying RSA-SHA256 signature..."
+    PUBLIC_KEY_FILE="${WORK_DIR}/signing_pub.key"
+    printf '%s' "${ARTIFACT_SIGNING_PUBLIC_KEY}" > "${PUBLIC_KEY_FILE}"
 
-openssl dgst -sha256 -verify "${PUBLIC_KEY_FILE}" \
-    -signature "${SIG_FILE}" "${PAYLOAD_ENC}" > /dev/null 2>&1 \
-    || { echo "FATAL: RSA signature verification FAILED" >&2; exit 1; }
-echo "  Signature OK."
+    openssl dgst -sha256 -verify "${PUBLIC_KEY_FILE}" \
+        -signature "${SIG_FILE}" "${PAYLOAD_ENC}" > /dev/null 2>&1 \
+        || { echo "FATAL: RSA signature verification FAILED" >&2; exit 1; }
+    echo "  Signature OK."
+else
+    echo "  Skipping signature verification (SKIP_SIGNATURE=true)"
+fi
 
 echo "  Verifying SHA256 payload checksum..."
 EXPECTED_CHECKSUM="$(python3 -c "import json,sys; d=json.load(open('${MANIFEST}')); print(d['payload_checksum'])")"
@@ -138,10 +143,11 @@ fi
 
 DECRYPTED_TAR="${WORK_DIR}/payload.tar.gz"
 
-if [[ "${FORMAT_VERSION}" == "1" ]]; then
-    echo "  Decrypting (v1: AES-256-CBC)..."
-    AES_KEY_FILE="${WORK_DIR}/aes.key"
-    echo "${ARTIFACT_AES_KEY}" | base64 -d > "${AES_KEY_FILE}"
+if [[ "${SKIP_ENCRYPTION}" == "false" ]]; then
+    if [[ "${FORMAT_VERSION}" == "1" ]]; then
+        echo "  Decrypting (v1: AES-256-CBC)..."
+        AES_KEY_FILE="${WORK_DIR}/aes.key"
+        echo "${ARTIFACT_AES_KEY}" | base64 -d > "${AES_KEY_FILE}"
     chmod 600 "${AES_KEY_FILE}"
     openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 \
         -pass "file:${AES_KEY_FILE}" -in "${PAYLOAD_ENC}" -out "${DECRYPTED_TAR}" \
@@ -177,12 +183,16 @@ PYEOF
 else
     echo "FATAL: unsupported format_version '${FORMAT_VERSION}'" >&2; exit 3
 fi
+else
+    echo "  Skipping decryption (SKIP_ENCRYPTION=true) — payload is unencrypted tar.gz"
+    cp "${PAYLOAD_ENC}" "${DECRYPTED_TAR}"
+fi
 
 GIT_HASH="$(python3 -c "import json,sys; d=json.load(open('${MANIFEST}')); print(d['git_hash'])")"
 
 if [[ -n "${OUT_TAR}" ]]; then
     cp "${DECRYPTED_TAR}" "${OUT_TAR}"
-    echo "==> Done: decrypted tar → ${OUT_TAR} (git_hash=${GIT_HASH})"
+    echo "==> Done: verified tar → ${OUT_TAR} (git_hash=${GIT_HASH})"
 else
     mkdir -p "${OUTPUT_DIR}"
     tar xzf "${DECRYPTED_TAR}" -C "${OUTPUT_DIR}"

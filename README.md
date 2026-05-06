@@ -389,19 +389,78 @@ First deploy (deploy-site.sh → lib/update-site.sh <deploy-dir> --trigger boots
 
 ```json
 {
-  "infra_artifact": "infra-<hash>.tar.gz",
-  "infra_hash":     "<sha>",
+  "infra": {
+    "git_hash":   "abc123def456...",
+    "signed":     true,
+    "encrypted":  true,
+    "type":       "gcs",
+    "bucket":     "my-artifacts-bucket",
+    "path":       "myproject/infra/abc123def456.tar.gz"
+  },
   "artifacts": [
-    { "name": "frontend",  "artifact": "frontend-<hash>.tar.gz",  "git_hash": "<sha>" },
-    { "name": "wordpress", "artifact": "wordpress-<hash>.tar.gz", "git_hash": "<sha>" }
+    {
+      "name":      "frontend",
+      "git_hash":  "def456abc789...",
+      "signed":    true,
+      "encrypted": true,
+      "type":      "gcs",
+      "bucket":    "my-artifacts-bucket",
+      "path":      "myproject/frontend/def456abc789.tar.gz"
+    },
+    {
+      "name":      "wordpress",
+      "git_hash":  "789abc012def...",
+      "signed":    false,
+      "encrypted": false,
+      "type":      "http",
+      "url":       "https://cdn.example.com/wordpress-789abc012def.tar.gz"
+    },
+    {
+      "name":      "plugins",
+      "git_hash":  "external",
+      "signed":    false,
+      "encrypted": false,
+      "type":      "local",
+      "directory": "/mnt/nfs/wordpress-plugins"
+    }
   ],
   "lifecycle_hooks": [
     { "script": "infra/bootstrap/setup-ssl.sh", "trigger": "bootstrap", "phase": "post-start" }
   ],
-  "promoted_at":   "2026-05-05T12:00:00Z",
+  "promoted_at":   "2026-05-06T14:00:00Z",
   "github_run_id": "12345678"
 }
 ```
+
+#### Storage types
+
+Each artifact declares its storage backend explicitly:
+
+- **`gcs`** — Google Cloud Storage
+  - `bucket`: Bucket name (without `gs://` prefix)
+  - `path`: Path to a tar.gz file within bucket (including any project prefix)
+  - Requires GCS authentication via service account key
+
+- **`http` / `https`** — Direct HTTP download
+  - `url`: Full HTTPS URL to artifact
+  - No authentication (public URL)
+
+- **`local`** — Pre-existing local directory
+  - `directory`: Absolute filesystem path (e.g., `/mnt/nfs/wordpress-plugins`)
+  - No download — directory must already exist on server
+  - Useful for NFS mounts or external dependencies managed outside the release process
+
+#### Security flags
+
+Each artifact can opt out of signing and/or encryption:
+
+- `signed: true` — Artifact bundle includes RSA-SHA256 signature (requires public key)
+- `encrypted: true` — Artifact content is AES-256-GCM encrypted (requires AES key)
+- `signed: false, encrypted: false` — Plain tar.gz, no verification (useful for public CDN artifacts or `type: local`)
+
+Default: both `true` if not specified. These flags do not apply to `type: local` artifacts (which are not downloaded or verified).
+
+#### Adding artifacts
 
 The `artifacts` array is the authoritative list of non-infra artifacts for a site. Adding
 a new artifact type requires only: a new CI build job, a new entry in the array, and an
@@ -434,11 +493,12 @@ matching `artifact:` label and restarts exactly those services — nothing more.
 artifact-cache/
 ├── frontend.tar.gz          ← stable path — Docker bind-mounts this
 ├── wordpress.tar.gz         ← stable path — Docker bind-mounts this
+├── plugins -> /mnt/nfs/wordpress-plugins  ← symlink for local artifacts
 ├── frontend-<hash>.tar.gz   ← content-addressed cache (last 3 kept)
 └── wordpress-<hash>.tar.gz
 ```
 
-The stable paths are written atomically (`cp` + `mv`) so Docker never races with an
+For `type: gcs` and `type: http` artifacts, stable paths are written atomically (`cp` + `mv`) so Docker never races with an in-progress download. For `type: local` artifacts, a symlink is created pointing to the pre-existing directory on the filesystem.
 in-progress download and mistakenly creates a directory at that path.
 
 ### Shared-bucket prefix (`GCS_PREFIX`)

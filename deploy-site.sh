@@ -104,24 +104,124 @@ _env_set() {
 
 # ── Artifact helpers ──────────────────────────────────────────────────────────
 
-artifact_is_encrypted() {
-    local bundle="$1"
-    [[ -f "$bundle" ]] || return 1
-    tar tzf "$bundle" 2>/dev/null | grep -q "^payload\.enc$"
+# Construct download URL from artifact storage config (JSON string)
+_artifact_download_url() {
+    local storage_json="$1" gcs_token="$2"
+    python3 - "$storage_json" "$gcs_token" <<'PYEOF'
+import json, sys
+storage = json.loads(sys.argv[1])
+storage_type = storage.get('type', 'gcs')
+
+if storage_type == 'local':
+    # Local directory - no download needed
+    print("LOCAL_DIRECTORY")
+elif storage_type == 'gcs':
+    bucket = storage['bucket'].lstrip('gs://')
+    if 'path' in storage:
+        path = storage['path']
+    else:
+        sys.exit("GCS storage requires 'path' field")
+    print(f"https://storage.googleapis.com/{bucket}/{path}")
+elif storage_type in ('http', 'https'):
+    print(storage['url'])
+else:
+    sys.exit(f"Unsupported storage type: {storage_type}")
+PYEOF
+}
+
+# Extract filename from artifact storage config (JSON string)
+_artifact_filename() {
+    local storage_json="$1"
+    python3 - "$storage_json" <<'PYEOF'
+import json, sys, os
+storage = json.loads(sys.argv[1])
+storage_type = storage.get('type', 'gcs')
+
+if storage_type == 'local':
+    # For local directories, use the directory basename
+    dir_path = storage['directory'].rstrip('/')
+    print(os.path.basename(dir_path))
+elif storage_type == 'gcs':
+    if 'path' in storage:
+        print(os.path.basename(storage['path']))
+    else:
+        sys.exit("GCS storage requires 'path' field")
+elif storage_type in ('http', 'https'):
+    print(os.path.basename(storage['url']))
+PYEOF
+}
+
+# Check if storage config is a local directory
+_artifact_is_local_directory() {
+    local storage_json="$1"
+    python3 - "$storage_json" <<'PYEOF'
+import json, sys
+storage = json.loads(sys.argv[1])
+if storage.get('type', 'gcs') == 'local' and 'directory' in storage:
+    print("true")
+else:
+    print("false")
+PYEOF
+}
+
+# Get local directory path from storage config
+_artifact_local_path() {
+    local storage_json="$1"
+    python3 - "$storage_json" <<'PYEOF'
+import json, sys
+storage = json.loads(sys.argv[1])
+if storage.get('type') == 'local' and 'directory' in storage:
+    print(storage['directory'])
+else:
+    sys.exit("Not a local directory storage config")
+PYEOF
 }
 
 decrypt_artifact() {
-    local bundle="$1" dest="$2" decrypt_sh="$3" secrets_dir="$4"
+    local bundle="$1" dest="$2" decrypt_sh="$3" secrets_dir="$4" signed="$5" encrypted="$6"
     local pub_key_file="${secrets_dir}/artifact_signing_public_key.pem"
     local aes_key_file="${secrets_dir}/artifact_aes_key.txt"
-    if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
-        ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
-        ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
-        SKIP_ENCRYPTION=false \
-        bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+    
+    local skip_encryption="true"
+    local skip_signature="true"
+    
+    [[ "${encrypted}" == "true" ]] && skip_encryption="false"
+    [[ "${signed}" == "true" ]] && skip_signature="false"
+    
+    if [[ "${encrypted}" == "true" && "${signed}" == "true" ]]; then
+        if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
+            ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
+            ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
+            SKIP_ENCRYPTION=false \
+            SKIP_SIGNATURE=false \
+            bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+        else
+            log_error "Artifact requires encryption and signing but keys not found"
+            exit 1
+        fi
+    elif [[ "${encrypted}" == "true" ]]; then
+        if [[ -f "${aes_key_file}" ]]; then
+            ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
+            SKIP_ENCRYPTION=false \
+            SKIP_SIGNATURE=true \
+            bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+        else
+            log_error "Artifact requires encryption but AES key not found"
+            exit 1
+        fi
+    elif [[ "${signed}" == "true" ]]; then
+        if [[ -f "${pub_key_file}" ]]; then
+            ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
+            SKIP_ENCRYPTION=true \
+            SKIP_SIGNATURE=false \
+            bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+        else
+            log_error "Artifact requires signing but public key not found"
+            exit 1
+        fi
     else
-        SKIP_ENCRYPTION=true bash "${decrypt_sh}" \
-            --bundle "${bundle}" --out-tar "${dest}"
+        SKIP_ENCRYPTION=true SKIP_SIGNATURE=true \
+            bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
     fi
 }
 
@@ -523,17 +623,22 @@ main() {
             -H "Authorization: Bearer ${GCS_TOKEN}" \
             "$(_gcs_https_url "${GCS_BASE}/channels/${RELEASE_CHANNEL}.json")")"
 
-        INFRA_ARTIFACT="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra_artifact'])")"
-        INFRA_HASH="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_hash',''))")"
-
-        # Extract filename if INFRA_ARTIFACT is a full URL
-        if [[ "${INFRA_ARTIFACT}" =~ ^(https?|gs):// ]]; then
-            INFRA_ARTIFACT_URL="${INFRA_ARTIFACT}"
-            INFRA_ARTIFACT="$(basename "${INFRA_ARTIFACT}")"
-            log_info "Channel metadata: infra=${INFRA_ARTIFACT_URL}"
+        # Parse new structured infra metadata
+        INFRA_JSON="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['infra']))")"
+        INFRA_HASH="$(echo "${INFRA_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['git_hash'])")"
+        INFRA_SIGNED="$(echo "${INFRA_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('signed', True))" | tr '[:upper:]' '[:lower:]')"
+        INFRA_ENCRYPTED="$(echo "${INFRA_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('encrypted', True))" | tr '[:upper:]' '[:lower:]')"
+        INFRA_STORAGE="$(echo "${INFRA_JSON}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({k:v for k,v in d.items() if k in ('type','bucket','path','directory','url')}))")"
+        
+        INFRA_ARTIFACT="$(_artifact_filename "${INFRA_STORAGE}")"
+        INFRA_IS_LOCAL="$(_artifact_is_local_directory "${INFRA_STORAGE}")"
+        INFRA_DOWNLOAD_URL="$(_artifact_download_url "${INFRA_STORAGE}" "${GCS_TOKEN}")"
+        
+        if [[ "${INFRA_IS_LOCAL}" == "true" ]]; then
+            INFRA_LOCAL_PATH="$(_artifact_local_path "${INFRA_STORAGE}")"
+            log_info "Channel metadata: infra=local directory at ${INFRA_LOCAL_PATH} (git_hash=${INFRA_HASH:0:12})"
         else
-            INFRA_ARTIFACT_URL=""
-            log_info "Channel metadata: infra=${INFRA_ARTIFACT}"
+            log_info "Channel metadata: infra=${INFRA_ARTIFACT} (git_hash=${INFRA_HASH:0:12}, signed=${INFRA_SIGNED}, encrypted=${INFRA_ENCRYPTED})"
         fi
     else
         log_step "2/8  GCS channel metadata (skipped — development mode)"
@@ -549,53 +654,59 @@ main() {
         mkdir -p "${DEPLOY_DIR}/artifact-cache"
         mkdir -p "${DEPLOY_DIR}/infra/secrets"
 
-        log_info "Downloading infra artifact from GCS..."
-        local infra_tmp infra_url
-        infra_tmp=$(mktemp /tmp/infra-XXXXXX.tar.gz.download)
-        
-        # Use full URL from metadata if available, otherwise construct from GCS_BASE
-        if [[ -n "${INFRA_ARTIFACT_URL}" ]]; then
-            infra_url="$(_gcs_https_url "${INFRA_ARTIFACT_URL}")"
-        else
-            infra_url="$(_gcs_https_url "${GCS_BASE}/artifacts/${INFRA_ARTIFACT}")"
-        fi
-        
-        curl -fsSL --retry 3 --retry-delay 5 \
-            -H "Authorization: Bearer ${GCS_TOKEN}" \
-            -o "${infra_tmp}" \
-            "${infra_url}"
-
-        local decrypt_bootstrap="${SCRIPT_DIR}/lib/decrypt.sh"
-        [[ -f "${decrypt_bootstrap}" ]] || { log_error "Bundled decrypt.sh missing: ${decrypt_bootstrap}"; exit 1; }
-
-        if artifact_is_encrypted "${infra_tmp}"; then
-            if [[ -z "${ARTIFACT_AES_KEY_FILE}" || ! -f "${ARTIFACT_AES_KEY_FILE}" || \
-                  -z "${ARTIFACT_SIGNING_PUB_KEY_FILE}" || ! -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
-                log_error "Infra artifact is encrypted but no decryption keys were provided."
-                log_error "Re-run with:"
-                log_error "  --artifact-aes-key-file <path>          (base64 AES-256 key)"
-                log_error "  --artifact-signing-pub-key-file <path>  (PEM RSA public key)"
-                rm -f "${infra_tmp}"
+        if [[ "${INFRA_IS_LOCAL}" == "true" ]]; then
+            # Local directory mode - copy from existing filesystem location
+            log_info "Using local infra directory: ${INFRA_LOCAL_PATH}"
+            
+            if [[ ! -d "${INFRA_LOCAL_PATH}" ]]; then
+                log_error "Local infra directory does not exist: ${INFRA_LOCAL_PATH}"
                 exit 1
             fi
-            log_info "Decrypting infra artifact..."
-            ARTIFACT_AES_KEY="$(cat "${ARTIFACT_AES_KEY_FILE}")" \
-            ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${ARTIFACT_SIGNING_PUB_KEY_FILE}")" \
-            SKIP_ENCRYPTION=false \
-            bash "${decrypt_bootstrap}" \
-                --bundle "${infra_tmp}" \
-                --out-tar "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}"
+            
+            log_info "Copying infra from ${INFRA_LOCAL_PATH} to ${DEPLOY_DIR}..."
+            cp -r "${INFRA_LOCAL_PATH}"/* "${DEPLOY_DIR}/"
+            log_info "Infra copied from local directory"
         else
-            log_info "Staging unencrypted infra artifact..."
-            SKIP_ENCRYPTION=true bash "${decrypt_bootstrap}" \
-                --bundle "${infra_tmp}" \
-                --out-tar "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}"
-        fi
+            # Download and extract infra artifact
+            log_info "Downloading infra artifact..."
+            local infra_tmp
+            infra_tmp=$(mktemp /tmp/infra-XXXXXX.tar.gz.download)
+            
+            curl -fsSL --retry 3 --retry-delay 5 \
+                -H "Authorization: Bearer ${GCS_TOKEN}" \
+                -o "${infra_tmp}" \
+                "${INFRA_DOWNLOAD_URL}"
 
-        log_info "Extracting infra artifact to ${DEPLOY_DIR}..."
-        tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" --strip-components=1 -C "${DEPLOY_DIR}"
-        rm -f "${infra_tmp}"
-        log_info "Infra extracted"
+            local decrypt_bootstrap="${SCRIPT_DIR}/lib/decrypt.sh"
+            [[ -f "${decrypt_bootstrap}" ]] || { log_error "Bundled decrypt.sh missing: ${decrypt_bootstrap}"; exit 1; }
+
+            if [[ "${INFRA_ENCRYPTED}" == "true" || "${INFRA_SIGNED}" == "true" ]]; then
+                if [[ "${INFRA_ENCRYPTED}" == "true" && ( -z "${ARTIFACT_AES_KEY_FILE}" || ! -f "${ARTIFACT_AES_KEY_FILE}" ) ]]; then
+                    log_error "Infra artifact requires encryption but no AES key provided."
+                    log_error "Re-run with: --artifact-aes-key-file <path>"
+                    rm -f "${infra_tmp}"
+                    exit 1
+                fi
+                if [[ "${INFRA_SIGNED}" == "true" && ( -z "${ARTIFACT_SIGNING_PUB_KEY_FILE}" || ! -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ) ]]; then
+                    log_error "Infra artifact requires signing but no public key provided."
+                    log_error "Re-run with: --artifact-signing-pub-key-file <path>"
+                    rm -f "${infra_tmp}"
+                    exit 1
+                fi
+                log_info "Verifying and decrypting infra artifact..."
+                decrypt_artifact "${infra_tmp}" "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" \
+                    "${decrypt_bootstrap}" "${DEPLOY_DIR}/infra/secrets" "${INFRA_SIGNED}" "${INFRA_ENCRYPTED}"
+            else
+                log_info "Staging infra artifact (unsigned, unencrypted)..."
+                decrypt_artifact "${infra_tmp}" "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" \
+                    "${decrypt_bootstrap}" "${DEPLOY_DIR}/infra/secrets" "false" "false"
+            fi
+
+            log_info "Extracting infra artifact to ${DEPLOY_DIR}..."
+            tar -xzf "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" --strip-components=1 -C "${DEPLOY_DIR}"
+            rm -f "${infra_tmp}"
+            log_info "Infra extracted"
+        fi
 
         local gen_env="${DEPLOY_DIR}/infra/scripts/generate-env.sh"
         if [[ -f "${gen_env}" ]]; then
@@ -703,8 +814,10 @@ main() {
         _env_set "GCS_BUCKET"      "$GCS_BUCKET"      "$env_file"
         _env_set "GCS_PREFIX"      "$GCS_PREFIX"      "$env_file"
         _env_set "RELEASE_CHANNEL" "$RELEASE_CHANNEL" "$env_file"
-        _env_set "INFRA_HASH"     "$INFRA_HASH"                           "$env_file"
-        _env_set "INFRA_ARTIFACT" "./artifact-cache/${INFRA_ARTIFACT}"    "$env_file"
+        _env_set "INFRA_HASH"      "$INFRA_HASH"                           "$env_file"
+        _env_set "INFRA_SIGNED"    "$INFRA_SIGNED"                         "$env_file"
+        _env_set "INFRA_ENCRYPTED" "$INFRA_ENCRYPTED"                      "$env_file"
+        _env_set "INFRA_ARTIFACT"  "./artifact-cache/${INFRA_ARTIFACT}"    "$env_file"
 
         log_info "Running initial artifact download and stack start..."
         local update_site="${SCRIPT_DIR}/lib/update-site.sh"
