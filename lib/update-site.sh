@@ -503,7 +503,7 @@ fi
 
 if [[ "${INFRA_STALE}" == "true" ]]; then
     _log "Extracting infra artifact to ${PROJECT_DIR}..."
-    tar -xzf "${ARTIFACT_CACHE}/${CHANNEL_INFRA_ARTIFACT}" --strip-components=1 -C "${PROJECT_DIR}"
+    tar -xzf "${ARTIFACT_CACHE}/${CHANNEL_INFRA_ARTIFACT}" -C "${PROJECT_DIR}"
     _dotenv_set INFRA_HASH      "${CHANNEL_INFRA_HASH}"
     _dotenv_set INFRA_SIGNED    "${CHANNEL_INFRA_SIGNED}"
     _dotenv_set INFRA_ENCRYPTED "${CHANNEL_INFRA_ENCRYPTED}"
