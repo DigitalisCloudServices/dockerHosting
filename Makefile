@@ -4,13 +4,14 @@
 # Install on macOS:  brew install shellcheck bats-core yamllint
 # Install on Debian: apt-get install shellcheck bats yamllint
 
-.PHONY: help lint test test-traefik test-syntax test-args test-yaml check-deps
+.PHONY: help lint test test-traefik test-lib test-syntax test-args test-yaml test-pam test-hooks check-deps
 
 SHELL := /bin/bash
 
 # All shell scripts to lint (excluding test helper stubs)
 SCRIPTS := setup.sh deploy-site.sh \
-  $(wildcard scripts/*.sh)
+  $(wildcard scripts/*.sh) \
+  $(wildcard lib/*.sh)
 
 # Prefer a project-local bats install, fall back to system
 BATS := $(shell command -v bats 2>/dev/null || echo "")
@@ -22,8 +23,11 @@ help:
 	@echo "  make lint          Run shellcheck on all scripts"
 	@echo "  make test          Run full test suite (lint + bats + yaml)"
 	@echo "  make test-traefik  Run Traefik script tests only"
+	@echo "  make test-lib      Run lib/ script tests"
 	@echo "  make test-syntax   Run bash syntax checks for all scripts"
 	@echo "  make test-args     Run argument-validation tests"
+	@echo "  make test-pam      Run PAM policy tests"
+	@echo "  make test-hooks    Run lifecycle hook tests"
 	@echo "  make test-yaml     Run YAML validation checks"
 	@echo "  make check-deps    Check required tools are installed"
 
@@ -57,12 +61,16 @@ lint: check-deps
 
 # ── tests ────────────────────────────────────────────────────────────────────
 
-test: lint test-syntax test-args test-traefik test-yaml
+test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-yaml
 	@echo "✓ All tests passed"
 
 test-traefik: check-deps
 	@echo "Running Traefik script tests..."
 	@bats --recursive tests/traefik/
+
+test-lib: check-deps
+	@echo "Running lib/ script tests..."
+	@bats --recursive tests/lib/
 
 test-syntax: check-deps
 	@echo "Running syntax checks..."
@@ -71,6 +79,14 @@ test-syntax: check-deps
 test-args: check-deps
 	@echo "Running argument validation tests..."
 	@bats tests/test_arg_validation.bats
+
+test-pam: check-deps
+	@echo "Running PAM policy tests..."
+	@bats tests/test_pam_policy.bats
+
+test-hooks: check-deps
+	@echo "Running lifecycle hook tests..."
+	@bats tests/test_lifecycle_hooks.bats
 
 test-yaml: check-deps
 	@echo "Running YAML validation..."

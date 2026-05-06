@@ -244,10 +244,21 @@ mkdir -p "${ARTIFACT_CACHE}"
 
 _download_artifact() {
     local type="$1" artifact_filename="$2"
-    local dest="${ARTIFACT_CACHE}/${artifact_filename}"
+    local artifact_basename download_url
+    
+    # Extract filename and construct download URL based on metadata format
+    if [[ "${artifact_filename}" =~ ^(https?|gs):// ]]; then
+        artifact_basename="$(basename "${artifact_filename}")"
+        download_url="$(_gcs_https_url "${artifact_filename}")"
+    else
+        artifact_basename="${artifact_filename}"
+        download_url="$(_gcs_https_url "${GCS_BASE}/artifacts/${artifact_filename}")"
+    fi
+    
+    local dest="${ARTIFACT_CACHE}/${artifact_basename}"
     local stable="${ARTIFACT_CACHE}/${type}.tar.gz"
 
-    _log "${type}: _download_artifact ${artifact_filename}"
+    _log "${type}: _download_artifact ${artifact_basename}"
 
     # Docker creates a directory at the bind-mount path if the file doesn't
     # exist when the container starts. Remove it so the download can proceed.
@@ -257,17 +268,17 @@ _download_artifact() {
     fi
 
     if [[ -f "${dest}" ]]; then
-        _log "${type}: cache hit — ${artifact_filename}"
+        _log "${type}: cache hit — ${artifact_basename}"
     else
-        _log "${type}: downloading ${artifact_filename} from GCS..."
+        _log "${type}: downloading ${artifact_basename} from GCS..."
         local download_tmp="${dest}.download"
-
+        
         curl -fsSL --retry 3 --retry-delay 5 \
             -H "Authorization: Bearer ${GCS_TOKEN}" \
             -o "${download_tmp}" \
-            "$(_gcs_https_url "${GCS_BASE}/artifacts/${artifact_filename}")"
+            "${download_url}"
 
-        _log "${type}: decrypting ${artifact_filename}..."
+        _log "${type}: decrypting ${artifact_basename}..."
         local pub_key_file="${PROJECT_DIR}/infra/secrets/artifact_signing_public_key.pem"
         local aes_key_file="${PROJECT_DIR}/infra/secrets/artifact_aes_key.txt"
         if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then

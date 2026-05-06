@@ -526,7 +526,15 @@ main() {
         INFRA_ARTIFACT="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra_artifact'])")"
         INFRA_HASH="$(echo "${CHANNEL_META}"     | python3 -c "import json,sys; print(json.load(sys.stdin).get('infra_hash',''))")"
 
-        log_info "Channel metadata: infra=${INFRA_ARTIFACT}"
+        # Extract filename if INFRA_ARTIFACT is a full URL
+        if [[ "${INFRA_ARTIFACT}" =~ ^(https?|gs):// ]]; then
+            INFRA_ARTIFACT_URL="${INFRA_ARTIFACT}"
+            INFRA_ARTIFACT="$(basename "${INFRA_ARTIFACT}")"
+            log_info "Channel metadata: infra=${INFRA_ARTIFACT_URL}"
+        else
+            INFRA_ARTIFACT_URL=""
+            log_info "Channel metadata: infra=${INFRA_ARTIFACT}"
+        fi
     else
         log_step "2/8  GCS channel metadata (skipped — development mode)"
     fi
@@ -542,12 +550,20 @@ main() {
         mkdir -p "${DEPLOY_DIR}/infra/secrets"
 
         log_info "Downloading infra artifact from GCS..."
-        local infra_tmp
+        local infra_tmp infra_url
         infra_tmp=$(mktemp /tmp/infra-XXXXXX.tar.gz.download)
+        
+        # Use full URL from metadata if available, otherwise construct from GCS_BASE
+        if [[ -n "${INFRA_ARTIFACT_URL}" ]]; then
+            infra_url="$(_gcs_https_url "${INFRA_ARTIFACT_URL}")"
+        else
+            infra_url="$(_gcs_https_url "${GCS_BASE}/artifacts/${INFRA_ARTIFACT}")"
+        fi
+        
         curl -fsSL --retry 3 --retry-delay 5 \
             -H "Authorization: Bearer ${GCS_TOKEN}" \
             -o "${infra_tmp}" \
-            "$(_gcs_https_url "${GCS_BASE}/artifacts/${INFRA_ARTIFACT}")"
+            "${infra_url}"
 
         local decrypt_bootstrap="${SCRIPT_DIR}/lib/decrypt.sh"
         [[ -f "${decrypt_bootstrap}" ]] || { log_error "Bundled decrypt.sh missing: ${decrypt_bootstrap}"; exit 1; }
@@ -799,4 +815,6 @@ print(' '.join(bad))
     echo ""
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

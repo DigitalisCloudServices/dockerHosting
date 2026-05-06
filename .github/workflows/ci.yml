@@ -22,7 +22,8 @@ jobs:
           shellcheck --severity=warning \
             setup.sh \
             deploy-site.sh \
-            scripts/*.sh
+            scripts/*.sh \
+            lib/*.sh
 
   test-syntax:
     name: Syntax checks (bash -n)
@@ -72,6 +73,48 @@ jobs:
 
       - name: Run Traefik tests
         run: bats --recursive tests/traefik/
+
+  test-lib:
+    name: lib/ script tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Run lib/ tests
+        run: bats --recursive tests/lib/
+
+  test-pam-policy:
+    name: PAM policy tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Run PAM policy tests
+        run: bats tests/test_pam_policy.bats
+
+  test-lifecycle-hooks:
+    name: Lifecycle hook tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Run lifecycle hook tests
+        run: bats tests/test_lifecycle_hooks.bats
 
   test-yaml:
     name: YAML validation
