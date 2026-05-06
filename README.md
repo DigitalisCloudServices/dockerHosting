@@ -71,7 +71,7 @@ sudo ./deploy-site.sh \
 2. Authenticates to GCS and downloads the `infra` artifact (bootstrap only — contains `docker-compose.yml`, nginx/Kong config, and any project-specific scripts)
 3. Extracts the infra artifact, generates application secrets
 4. Copies GCS and decryption keys into `infra/secrets/` (root-only, mode 600)
-5. Writes a minimal `.env` (GCS bucket, Kong port, registry, infra hash)
+5. Writes a minimal `.env` (COMPOSE_PROJECT_NAME, GCS bucket, Kong port, registry, infra hash)
 6. Calls `lib/update-site.sh <deploy-dir> --trigger bootstrap` — downloads all remaining artifacts, runs `bootstrap` lifecycle hooks, and starts the stack
 7. Configures Traefik routing, log rotation, and a systemd timer for ongoing updates
 

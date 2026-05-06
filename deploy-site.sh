@@ -820,8 +820,9 @@ main() {
     local env_file="${DEPLOY_DIR}/.env"
     if [[ ! -f "$env_file" ]]; then touch "$env_file"; fi
 
-    _env_set "KONG_HTTPS_PORT" "$KONG_PORT"    "$env_file"
-    _env_set "DEPLOY_MODE"    "$DEPLOY_MODE"  "$env_file"
+    _env_set "COMPOSE_PROJECT_NAME" "$SITE_NAME"   "$env_file"
+    _env_set "KONG_HTTPS_PORT"      "$KONG_PORT"   "$env_file"
+    _env_set "DEPLOY_MODE"          "$DEPLOY_MODE" "$env_file"
     if [[ -n "$DOMAIN" ]]; then _env_set "SITE_HOSTNAME" "$DOMAIN" "$env_file"; fi
     if [[ "$DEPLOY_MODE" == "production" ]]; then _env_set "AR_REGISTRY" "$AR_REGISTRY" "$env_file"; fi
 
