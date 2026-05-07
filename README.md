@@ -57,11 +57,11 @@ sudo ./deploy-site.sh
 
 ```bash
 sudo ./deploy-site.sh \
-  --site-name velaair \
+  --site-name mysite \
   --gcs-key-file /path/to/gcs-sa.json \
   --artifact-aes-key-file /path/to/artifact_aes_key.txt \
   --artifact-signing-pub-key-file /path/to/artifact_signing_public_key.pem \
-  --domain velaair.io \
+  --domain example.com \
   --kong-port 8443
 ```
 
@@ -206,11 +206,11 @@ dockerHosting/
 
 ```bash
 sudo ./deploy-site.sh \
-  --site-name velaair \
+  --site-name mysite \
   --gcs-key-file /root/keys/gcs-sa.json \
   --artifact-aes-key-file /root/keys/artifact_aes_key.txt \
   --artifact-signing-pub-key-file /root/keys/artifact_signing_public_key.pem \
-  --domain velaair.io \
+  --domain example.com \
   --kong-port 8443
 ```
 
@@ -230,15 +230,15 @@ sudo ./deploy-site.sh --site-name site-b --gcs-key-file /root/keys/site-b-sa.jso
 ### Example 3: Force an immediate artifact update
 
 ```bash
-sudo /opt/apps/velaair/bin/update-now
+sudo /opt/apps/mysite/bin/update-now
 # or equivalently:
-sudo /opt/dockerHosting/lib/update-site.sh /opt/apps/velaair
+sudo /opt/dockerHosting/lib/update-site.sh /opt/apps/mysite
 
 # Check what would update without applying:
-sudo /opt/dockerHosting/lib/update-site.sh /opt/apps/velaair --dry-run
+sudo /opt/dockerHosting/lib/update-site.sh /opt/apps/mysite --dry-run
 
 # Force-recreate all containers with current artifacts:
-sudo /opt/dockerHosting/lib/update-site.sh /opt/apps/velaair --force
+sudo /opt/dockerHosting/lib/update-site.sh /opt/apps/mysite --force
 ```
 
 ## Manual Script Usage
@@ -649,7 +649,7 @@ infra artifact is even extracted. Subsequent timer runs read from the local
 
 This repository works alongside:
 - **dockerBuildfiles**: Builds shared container images published to Google Artifact Registry. Images are pulled by `update.sh` via `docker compose pull` on each update cycle.
-- **site repos** (e.g. velaair-website): Each site repo contains its own `infra/` directory (packaged as the `infra` artifact), CI workflow that builds artifacts and promotes channel metadata to GCS, `docker-compose.yml` with `artifact:` labels on consuming services, and optionally `infra/lifecycle-hooks.json` declaring project-specific hook scripts.
+- **site repos** (e.g. example-site): Each site repo contains its own `infra/` directory (packaged as the `infra` artifact), CI workflow that builds artifacts and promotes channel metadata to GCS, `docker-compose.yml` with `artifact:` labels on consuming services, and optionally `infra/lifecycle-hooks.json` declaring project-specific hook scripts.
 
 ## Security Verification
 

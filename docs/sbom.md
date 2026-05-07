@@ -145,7 +145,7 @@ The following upstream services are runtime dependencies of a deployed server bu
 | NewRelic agent | Log shipping, observability | Application / ops team |
 | Docker Hub | Container image registry for Traefik | Docker Inc. |
 | Let's Encrypt / ACME CA | TLS certificate issuance | External CA |
-| Application containers | Site workloads | kse-portal / dockerBuildfiles |
+| Application containers | Site workloads | example-site / dockerBuildfiles |
 
 ---
 

@@ -24,7 +24,7 @@
 #   --setup-logrotate <yes|no> Set up log rotation (default: yes)
 #   --setup-timer <yes|no>   Install systemd updater timer (default: yes for production, no for development)
 #   --non-interactive        Skip all prompts
-#   --gcs-bucket <url>       GCS bucket URL (default: gs://velaair-website-artifacts) [production only]
+#   --gcs-bucket <url>       GCS bucket URL (default: gs://example-artifacts) [production only]
 #   --gcs-prefix <path>      Optional subfolder prefix inside the bucket for shared-bucket deployments [production only]
 #   --gcs-key-file <path>    Path to GCS service account JSON key file [production only, required]
 #   --channel <name>         Release channel — branch name + qualifier, e.g. main-latest, main-1.2.3 (default: main-latest) [production only]
@@ -338,7 +338,7 @@ parse_args() {
     DEPLOY_DIR=""
     DOMAIN=""
     KONG_PORT=""
-    GCS_BUCKET="gs://velaair-website-artifacts"
+    GCS_BUCKET="gs://example-artifacts"
     GCS_PREFIX=""
     GCS_KEY_FILE=""
     RELEASE_CHANNEL="main-latest"
