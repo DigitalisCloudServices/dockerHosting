@@ -308,11 +308,11 @@ EOF
     grep -q "/etc/traefik:/etc/traefik:ro" "$docker_log"
 }
 
-@test "start_traefik: sets restart policy to unless-stopped" {
+@test "start_traefik: sets restart policy to always" {
     local docker_log="$BATS_TEST_TMPDIR/docker.log"
     create_call_log_mock "docker" "$docker_log"
     start_traefik
-    grep -q "unless-stopped" "$docker_log"
+    grep -q "\-\-restart always" "$docker_log"
 }
 
 @test "start_traefik: drops all capabilities" {

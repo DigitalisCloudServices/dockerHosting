@@ -23,6 +23,7 @@
 #   --create-user <yes|no>   Create dedicated system user (default: yes)
 #   --setup-logrotate <yes|no> Set up log rotation (default: yes)
 #   --setup-timer <yes|no>   Install systemd updater timer (default: yes for production, no for development)
+#   --force                  Force container recreation and run all bootstrap hooks
 #   --non-interactive        Skip all prompts
 #   --gcs-bucket <url>       GCS bucket URL (default: gs://example-artifacts) [production only]
 #   --gcs-prefix <path>      Optional subfolder prefix inside the bucket for shared-bucket deployments [production only]
@@ -349,6 +350,7 @@ parse_args() {
     ADD_DOCKER_GROUP="no"
     SETUP_LOGROTATE="yes"
     SETUP_TIMER=""   # defaulted in apply_defaults based on mode
+    FORCE_BOOTSTRAP=false
 
     if [[ $# -eq 0 ]]; then return 0; fi
 
@@ -370,6 +372,7 @@ parse_args() {
             --create-user)      CREATE_USER="$2";   shift 2 ;;
             --setup-logrotate)  SETUP_LOGROTATE="$2"; shift 2 ;;
             --setup-timer)      SETUP_TIMER="$2";   shift 2 ;;
+            --force)            FORCE_BOOTSTRAP=true; shift ;;
             --non-interactive)  NON_INTERACTIVE=true; shift ;;
             --help|-h)
                 grep '^#   ' "$0" | sed 's/^#   //'
@@ -835,7 +838,11 @@ main() {
         log_info "Running initial artifact download and stack start..."
         local update_site="${SCRIPT_DIR}/lib/update-site.sh"
         [[ -f "${update_site}" ]] || { log_error "update-site.sh not found at ${update_site}"; exit 1; }
-        bash "${update_site}" "${DEPLOY_DIR}" --trigger bootstrap \
+        
+        local update_args="--trigger bootstrap --always-run-hooks"
+        [[ "${FORCE_BOOTSTRAP}" == "true" ]] && update_args="${update_args} --force"
+        
+        bash "${update_site}" "${DEPLOY_DIR}" ${update_args} \
             || { log_error "update-site.sh failed — check logs above"; exit 1; }
 
         _bad=$(docker compose -f "${DEPLOY_DIR}/docker-compose.yml" ps --format json 2>/dev/null \

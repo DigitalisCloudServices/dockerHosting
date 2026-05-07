@@ -271,6 +271,14 @@ for _i in "${!ARTIFACT_STALE[@]}"; do
     [[ "${ARTIFACT_STALE[$_i]}" == "true" ]] && _any_stale=true
 done
 
+# Auto-detect fresh bootstrap: if no containers exist, force hooks to run
+if [[ "${_any_stale}" == "false" && "${TRIGGER}" == "bootstrap" ]]; then
+    if ! docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --services 2>/dev/null | grep -q .; then
+        _log "Fresh deployment detected (no containers exist) — forcing bootstrap hooks"
+        ALWAYS_RUN_HOOKS=true
+    fi
+fi
+
 if [[ "${_any_stale}" == "false" && "${ALWAYS_RUN_HOOKS}" != "true" ]]; then
     _log "All artifacts up to date — nothing to do."
     exit 0
