@@ -413,7 +413,8 @@ First deploy (deploy-site.sh → lib/update-site.sh <deploy-dir> --trigger boots
       "signed":    false,
       "encrypted": false,
       "type":      "http",
-      "url":       "https://cdn.example.com/wordpress-789abc012def.tar.gz"
+      "url":       "https://cdn.example.com/wordpress-789abc012def.tar.gz",
+      "target_dir": "wp-content/themes/custom"
     },
     {
       "name":      "plugins",
@@ -459,6 +460,19 @@ Each artifact can opt out of signing and/or encryption:
 - `signed: false, encrypted: false` — Plain tar.gz, no verification (useful for public CDN artifacts or `type: local`)
 
 Default: both `true` if not specified. These flags do not apply to `type: local` artifacts (which are not downloaded or verified).
+
+#### Extraction target directory
+
+Artifacts can optionally specify a `target_dir` field to extract to a specific subdirectory within the deployment directory:
+
+- **`target_dir`** (optional) — Relative path within the deployment directory
+  - When specified, the artifact tar.gz is extracted to `${DEPLOY_DIR}/${target_dir}` instead of being written to a Docker volume
+  - Path is always relative to the deployment directory root (leading/trailing slashes stripped automatically)
+  - Useful for extracting theme files, configuration, or other filesystem-based artifacts
+  - Example: `"target_dir": "wp-content/themes/custom"` extracts to `/opt/apps/mysite/wp-content/themes/custom`
+  - When omitted, artifacts are written to Docker volumes as `/run/artifact.tar.gz` (default behavior for volume-mounted artifacts)
+
+**Note:** `target_dir` does not apply to `type: local` artifacts, which are symlinked rather than extracted.
 
 #### Adding artifacts
 

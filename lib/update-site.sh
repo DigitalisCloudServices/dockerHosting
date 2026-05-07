@@ -154,6 +154,7 @@ ARTIFACT_HASHES=()
 ARTIFACT_STORAGE_CONFIGS=()
 ARTIFACT_SIGNED=()
 ARTIFACT_ENCRYPTED=()
+ARTIFACT_TARGET_DIRS=()
 
 if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
     _log "Fetching channel metadata from GCS..."
@@ -195,6 +196,7 @@ PYEOF
     readarray -t ARTIFACT_SIGNED < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(str(a.get('signed', True)).lower()) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_ENCRYPTED < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(str(a.get('encrypted', True)).lower()) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_STORAGE_CONFIGS < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(json.dumps({k:v for k,v in a.items() if k in ('type','bucket','path','directory','url')})) for a in json.load(sys.stdin).get('artifacts',[])]")
+    readarray -t ARTIFACT_TARGET_DIRS < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a.get('target_dir', '')) for a in json.load(sys.stdin).get('artifacts',[])]")
     
     # Extract filenames from storage configs
     for _storage in "${ARTIFACT_STORAGE_CONFIGS[@]}"; do
@@ -233,6 +235,7 @@ else
             ARTIFACT_HASHES+=("$(_dotenv_get "${_n^^}_GIT_HASH" || echo '')")
             ARTIFACT_SIGNED+=("$(_dotenv_get "${_n^^}_SIGNED" || echo 'true')")
             ARTIFACT_ENCRYPTED+=("$(_dotenv_get "${_n^^}_ENCRYPTED" || echo 'true')")
+            ARTIFACT_TARGET_DIRS+=("$(_dotenv_get "${_n^^}_TARGET_DIR" || echo '')")
         done
     fi
     _log "Skip-download mode: using pinned data from .env"
@@ -482,19 +485,51 @@ _write_to_artifact_volume() {
     _log "${type}: volume ${vol} updated"
 }
 
+_extract_to_directory() {
+    local type="$1"
+    local target_dir="$2"
+    local stable="${ARTIFACT_CACHE}/${type}.tar.gz"
+    
+    # Strip leading/trailing slashes and ensure relative path
+    target_dir="${target_dir#/}"
+    target_dir="${target_dir%/}"
+    
+    local extract_path="${PROJECT_DIR}/${target_dir}"
+    
+    if [[ -d "${stable}" ]]; then
+        _warn "${type}: removing directory at stable path (Docker created it): ${stable}"
+        rm -rf "${stable}"
+    fi
+    [[ -f "${stable}" ]] || _fail "${type}: stable artifact not found at ${stable}"
+    
+    _log "${type}: extracting to ${extract_path}..."
+    mkdir -p "${extract_path}"
+    tar -xzf "${stable}" -C "${extract_path}"
+    _log "${type}: extracted to ${target_dir}/"
+}
+
 if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
     [[ "${INFRA_STALE}" == "true" ]] && _download_artifact infra "${CHANNEL_INFRA_STORAGE}" "${CHANNEL_INFRA_SIGNED}" "${CHANNEL_INFRA_ENCRYPTED}"
     for _i in "${!ARTIFACT_NAMES[@]}"; do
         if [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]]; then
             _download_artifact "${ARTIFACT_NAMES[$_i]}" "${ARTIFACT_STORAGE_CONFIGS[$_i]}" "${ARTIFACT_SIGNED[$_i]}" "${ARTIFACT_ENCRYPTED[$_i]}"
-            _write_to_artifact_volume "${ARTIFACT_NAMES[$_i]}"
+            
+            # Extract to directory if target_dir is specified, otherwise write to volume
+            if [[ -n "${ARTIFACT_TARGET_DIRS[$_i]:-}" ]]; then
+                _extract_to_directory "${ARTIFACT_NAMES[$_i]}" "${ARTIFACT_TARGET_DIRS[$_i]}"
+            else
+                _write_to_artifact_volume "${ARTIFACT_NAMES[$_i]}"
+            fi
         fi
     done
 else
     # --skip-artifact-download --force: restore from local cache into volumes
     if [[ "${FORCE}" == "true" ]]; then
-        for _n in "${ARTIFACT_NAMES[@]}"; do
-            _write_to_artifact_volume "${_n}"
+        for _i in "${!ARTIFACT_NAMES[@]}"; do
+            # Only write to volume if no target_dir (volumes only)
+            if [[ -z "${ARTIFACT_TARGET_DIRS[$_i]:-}" ]]; then
+                _write_to_artifact_volume "${ARTIFACT_NAMES[$_i]}"
+            fi
         done
     fi
 fi
@@ -517,6 +552,7 @@ for _i in "${!ARTIFACT_NAMES[@]}"; do
         _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_GIT_HASH"   "${ARTIFACT_HASHES[$_i]}"
         _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_SIGNED"     "${ARTIFACT_SIGNED[$_i]}"
         _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_ENCRYPTED"  "${ARTIFACT_ENCRYPTED[$_i]}"
+        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_TARGET_DIR" "${ARTIFACT_TARGET_DIRS[$_i]:-}"
     fi
 done
 

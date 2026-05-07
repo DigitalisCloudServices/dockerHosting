@@ -182,12 +182,6 @@ decrypt_artifact() {
     local pub_key_file="${secrets_dir}/artifact_signing_public_key.pem"
     local aes_key_file="${secrets_dir}/artifact_aes_key.txt"
     
-    local skip_encryption="true"
-    local skip_signature="true"
-    
-    [[ "${encrypted}" == "true" ]] && skip_encryption="false"
-    [[ "${signed}" == "true" ]] && skip_signature="false"
-    
     if [[ "${encrypted}" == "true" && "${signed}" == "true" ]]; then
         if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
             ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
