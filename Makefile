@@ -1,10 +1,14 @@
 # dockerHosting — development targets
 # Requires: shellcheck, bats (bats-core), yamllint
+# Optional: shfmt, bashate, shellharden, kcov
 #
-# Install on macOS:  brew install shellcheck bats-core yamllint
-# Install on Debian: apt-get install shellcheck bats yamllint
+# Install on macOS:  brew install shellcheck bats-core yamllint shfmt shellharden
+# Install on Debian: apt-get install shellcheck bats yamllint shfmt
+#                    pip install bashate
 
-.PHONY: help lint test test-traefik test-lib test-syntax test-args test-yaml test-pam test-hooks check-deps
+.PHONY: help lint test test-traefik test-lib test-syntax test-args test-yaml test-pam test-hooks \
+        test-format test-style test-security test-complexity test-unused test-docs test-permissions \
+        format coverage ci test-all check-deps
 
 SHELL := /bin/bash
 
@@ -20,21 +24,40 @@ BATS := $(shell command -v bats 2>/dev/null || echo "")
 
 help:
 	@echo "Available targets:"
-	@echo "  make lint          Run shellcheck on all scripts"
-	@echo "  make test          Run full test suite (lint + bats + yaml)"
-	@echo "  make test-traefik  Run Traefik script tests only"
-	@echo "  make test-lib      Run lib/ script tests"
-	@echo "  make test-syntax   Run bash syntax checks for all scripts"
-	@echo "  make test-args     Run argument-validation tests"
-	@echo "  make test-pam      Run PAM policy tests"
-	@echo "  make test-hooks    Run lifecycle hook tests"
-	@echo "  make test-yaml     Run YAML validation checks"
-	@echo "  make check-deps    Check required tools are installed"
+	@echo ""
+	@echo "Core Tests:"
+	@echo "  make lint              Run shellcheck on all scripts"
+	@echo "  make test              Run required test suite (lint + bats + yaml)"
+	@echo "  make test-all          Comprehensive suite with all quality checks"
+	@echo "  make ci                Fast CI subset (lint + syntax + args + yaml)"
+	@echo ""
+	@echo "BATS Test Suites:"
+	@echo "  make test-traefik      Run Traefik script tests only"
+	@echo "  make test-lib          Run lib/ script tests"
+	@echo "  make test-syntax       Run bash syntax checks for all scripts"
+	@echo "  make test-args         Run argument-validation tests"
+	@echo "  make test-pam          Run PAM policy tests"
+	@echo "  make test-hooks        Run lifecycle hook tests"
+	@echo "  make test-yaml         Run YAML validation checks"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  make test-format       Check shell script formatting (shfmt)"
+	@echo "  make test-style        Check bash style guide compliance (bashate)"
+	@echo "  make test-security     Check for security anti-patterns (shellharden)"
+	@echo "  make test-complexity   Check function length and nesting depth"
+	@echo "  make test-unused       Detect unused functions"
+	@echo "  make test-docs         Check function documentation coverage"
+	@echo "  make test-permissions  Verify all .sh files are executable"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make format            Auto-format all scripts with shfmt"
+	@echo "  make coverage          Generate test coverage report (kcov)"
+	@echo "  make check-deps        Check required tools are installed"
 
 # ── dependency check ─────────────────────────────────────────────────────────
 
 check-deps:
-	@echo "Checking dependencies..."
+	@echo "Checking required dependencies..."
 	@command -v shellcheck >/dev/null 2>&1 \
 		|| { echo "ERROR: shellcheck not found."; \
 		     echo "  macOS:  brew install shellcheck"; \
@@ -50,7 +73,21 @@ check-deps:
 		     echo "  macOS:  brew install yamllint"; \
 		     echo "  Debian: apt-get install yamllint"; exit 1; }
 	@echo "  ✓ yamllint $(shell yamllint --version 2>&1 | awk '{print $$2}')"
-	@echo "All dependencies present."
+	@echo "All required dependencies present."
+	@echo ""
+	@echo "Checking optional quality tools..."
+	@command -v shfmt >/dev/null 2>&1 \
+		&& echo "  ✓ shfmt $(shell shfmt --version)" \
+		|| echo "  ⚠ shfmt not found (optional - for formatting checks)"
+	@command -v bashate >/dev/null 2>&1 \
+		&& echo "  ✓ bashate $(shell bashate --version 2>&1 | head -1)" \
+		|| echo "  ⚠ bashate not found (optional - for style checks)"
+	@command -v shellharden >/dev/null 2>&1 \
+		&& echo "  ✓ shellharden $(shell shellharden --version 2>&1 | head -1)" \
+		|| echo "  ⚠ shellharden not found (optional - for security checks)"
+	@command -v kcov >/dev/null 2>&1 \
+		&& echo "  ✓ kcov $(shell kcov --version 2>&1 | head -1)" \
+		|| echo "  ⚠ kcov not found (optional - for coverage reports)"
 
 # ── lint ─────────────────────────────────────────────────────────────────────
 
@@ -61,8 +98,17 @@ lint: check-deps
 
 # ── tests ────────────────────────────────────────────────────────────────────
 
-test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-yaml
-	@echo "✓ All tests passed"
+# Core test suite (required checks only)
+test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-yaml test-permissions
+	@echo "✓ All required tests passed"
+
+# Comprehensive test suite with optional quality checks
+test-all: test test-format test-style test-security test-complexity test-docs test-unused
+	@echo "✓ Full test suite completed"
+
+# Fast CI subset (no optional tools required)
+ci: lint test-syntax test-args test-yaml test-permissions
+	@echo "✓ CI checks passed"
 
 test-traefik: check-deps
 	@echo "Running Traefik script tests..."
@@ -91,3 +137,65 @@ test-hooks: check-deps
 test-yaml: check-deps
 	@echo "Running YAML validation..."
 	@bats tests/test_yaml.bats
+
+# ── code quality ─────────────────────────────────────────────────────────────
+
+test-format:
+	@echo "Checking shell script formatting..."
+	@command -v shfmt >/dev/null 2>&1 \
+		|| { echo "ERROR: shfmt not found. Install: brew install shfmt"; exit 1; }
+	@shfmt -d -i 4 -ci -sr $(SCRIPTS) \
+		|| { echo "✗ Formatting issues found. Run 'make format' to fix."; exit 1; }
+	@echo "✓ Format check passed"
+
+test-style:
+	@echo "Running bashate style checks..."
+	@command -v bashate >/dev/null 2>&1 \
+		|| { echo "ERROR: bashate not found. Install: pip install bashate"; exit 1; }
+	@bashate --verbose --ignore E006 $(SCRIPTS)
+	@echo "✓ Style check passed"
+
+test-security:
+	@echo "Running security checks..."
+	@command -v shellharden >/dev/null 2>&1 \
+		|| { echo "ERROR: shellharden not found. Install: brew install shellharden"; exit 1; }
+	@for script in $(SCRIPTS); do \
+		shellharden --check "$$script" || exit 1; \
+	done
+	@echo "✓ Security check passed"
+
+test-complexity:
+	@echo "Checking code complexity..."
+	@./scripts/check-complexity.sh
+
+test-unused:
+	@echo "Checking for unused functions..."
+	@./scripts/check-unused-functions.sh
+
+test-docs:
+	@echo "Checking function documentation..."
+	@./scripts/check-function-docs.sh
+
+test-permissions:
+	@echo "Checking file permissions..."
+	@./scripts/check-permissions.sh
+
+# ── formatters ───────────────────────────────────────────────────────────────
+
+format:
+	@echo "Formatting shell scripts..."
+	@command -v shfmt >/dev/null 2>&1 \
+		|| { echo "ERROR: shfmt not found. Install: brew install shfmt"; exit 1; }
+	@shfmt -w -i 4 -ci -sr $(SCRIPTS)
+	@echo "✓ Formatted $(words $(SCRIPTS)) scripts"
+
+# ── coverage ─────────────────────────────────────────────────────────────────
+
+coverage:
+	@echo "Generating test coverage report..."
+	@command -v kcov >/dev/null 2>&1 \
+		|| { echo "ERROR: kcov not found. Install: brew install kcov"; exit 1; }
+	@mkdir -p coverage
+	@kcov --exclude-pattern=/usr coverage/ bats tests/
+	@echo "✓ Coverage report generated in coverage/"
+	@echo "  Open coverage/index.html to view"
