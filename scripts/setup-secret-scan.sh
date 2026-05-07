@@ -32,15 +32,18 @@ FORCE=false
 for arg in "$@"; do
     case "$arg" in
         --force) FORCE=true ;;
-        -*)      echo "[ERROR] Unknown option: $arg"; exit 1 ;;
-        *)       REPO_PATH="$arg" ;;
+        -*)
+            echo "[ERROR] Unknown option: $arg"
+            exit 1
+            ;;
+        *) REPO_PATH="$arg" ;;
     esac
 done
 
 # Install gitleaks binary
 install_gitleaks() {
-    if command -v gitleaks &>/dev/null && [[ "$FORCE" != true ]]; then
-        echo "[INFO] gitleaks already installed: $(gitleaks version 2>/dev/null || echo 'unknown version')"
+    if command -v gitleaks &> /dev/null && [[ "$FORCE" != true ]]; then
+        echo "[INFO] gitleaks already installed: $(gitleaks version 2> /dev/null || echo 'unknown version')"
         return
     fi
 
@@ -49,14 +52,17 @@ install_gitleaks() {
     local arch
     arch="$(uname -m)"
     case "$arch" in
-        x86_64)  arch="x64" ;;
+        x86_64) arch="x64" ;;
         aarch64) arch="arm64" ;;
-        *)       echo "[ERROR] Unsupported architecture: $arch"; exit 1 ;;
+        *)
+            echo "[ERROR] Unsupported architecture: $arch"
+            exit 1
+            ;;
     esac
 
     local version
-    version="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
-        | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')"
+    version="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest |
+        grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')"
 
     if [[ -z "$version" ]]; then
         echo "[ERROR] Could not determine latest gitleaks version"
@@ -81,7 +87,7 @@ install_gitleaks() {
     tar -xzf "${tmpdir}/${tarball}" -C "$tmpdir" gitleaks
     install -m 0755 "${tmpdir}/gitleaks" /usr/local/bin/gitleaks
 
-    echo "[INFO] gitleaks installed: $(gitleaks version 2>/dev/null)"
+    echo "[INFO] gitleaks installed: $(gitleaks version 2> /dev/null)"
 }
 
 # Write the pre-commit hook

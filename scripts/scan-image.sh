@@ -38,55 +38,82 @@ IMAGES=()
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --severity)          SEVERITY="$2"; shift 2 ;;
-        --ignore-unfixed)    IGNORE_UNFIXED=true; shift ;;
-        --no-fail)           NO_FAIL=true; shift ;;
-        --compose)           COMPOSE_FILE="$2"; shift 2 ;;
-        --verify-signature)  VERIFY_SIGNATURE=true; shift ;;
-        --cosign-key)        COSIGN_KEY="$2"; shift 2 ;;
-        -*)                  echo "[ERROR] Unknown option: $1"; exit 1 ;;
-        *)                   IMAGES+=("$1"); shift ;;
+        --severity)
+            SEVERITY="$2"
+            shift 2
+            ;;
+        --ignore-unfixed)
+            IGNORE_UNFIXED=true
+            shift
+            ;;
+        --no-fail)
+            NO_FAIL=true
+            shift
+            ;;
+        --compose)
+            COMPOSE_FILE="$2"
+            shift 2
+            ;;
+        --verify-signature)
+            VERIFY_SIGNATURE=true
+            shift
+            ;;
+        --cosign-key)
+            COSIGN_KEY="$2"
+            shift 2
+            ;;
+        -*)
+            echo "[ERROR] Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            IMAGES+=("$1")
+            shift
+            ;;
     esac
 done
 
 # Install Trivy if not present
 install_trivy() {
-    if command -v trivy &>/dev/null; then return; fi
+    if command -v trivy &> /dev/null; then return; fi
 
     echo "[INFO] Installing Trivy scanner..."
 
     # Add Trivy apt repository
     apt-get install -y wget apt-transport-https gnupg lsb-release
-    wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
-        | gpg --dearmor | tee /usr/share/keyrings/trivy.gpg > /dev/null
+    wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key |
+        gpg --dearmor | tee /usr/share/keyrings/trivy.gpg > /dev/null
     echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb \
         $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/trivy.list
     apt-get update
     apt-get install -y trivy
-    echo "[INFO] Trivy installed: $(trivy --version 2>/dev/null | head -1)"
+    echo "[INFO] Trivy installed: $(trivy --version 2> /dev/null | head -1)"
 }
 
 # Install Cosign if not present
 install_cosign() {
-    if command -v cosign &>/dev/null; then return; fi
+    if command -v cosign &> /dev/null; then return; fi
 
     echo "[INFO] Installing Cosign..."
     local arch
     arch="$(uname -m)"
     case "$arch" in
-        x86_64)  arch="amd64" ;;
+        x86_64) arch="amd64" ;;
         aarch64) arch="arm64" ;;
-        *)       echo "[ERROR] Unsupported architecture for Cosign: $arch"; exit 1 ;;
+        *)
+            echo "[ERROR] Unsupported architecture for Cosign: $arch"
+            exit 1
+            ;;
     esac
 
     local version
-    version="$(curl -fsSL https://api.github.com/repos/sigstore/cosign/releases/latest \
-        | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')"
+    version="$(curl -fsSL https://api.github.com/repos/sigstore/cosign/releases/latest |
+        grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')"
     local url="https://github.com/sigstore/cosign/releases/download/v${version}/cosign-linux-${arch}"
 
     curl -fsSL "$url" -o /usr/local/bin/cosign
     chmod +x /usr/local/bin/cosign
-    echo "[INFO] Cosign installed: $(cosign version 2>/dev/null | head -1)"
+    echo "[INFO] Cosign installed: $(cosign version 2> /dev/null | head -1)"
 }
 
 # Verify a single image signature with Cosign
@@ -99,7 +126,7 @@ verify_image_signature() {
             echo "[ERROR] Cosign key not found: $COSIGN_KEY"
             return 1
         fi
-        if cosign verify --key "$COSIGN_KEY" "$image" &>/dev/null; then
+        if cosign verify --key "$COSIGN_KEY" "$image" &> /dev/null; then
             echo "[INFO] ✓ $image — signature verified (key: $COSIGN_KEY)"
             return 0
         else
@@ -110,7 +137,7 @@ verify_image_signature() {
         # Keyless Sigstore verification — requires OIDC transparency log
         if cosign verify "$image" \
             --certificate-identity-regexp=".*" \
-            --certificate-oidc-issuer-regexp=".*" &>/dev/null; then
+            --certificate-oidc-issuer-regexp=".*" &> /dev/null; then
             echo "[INFO] ✓ $image — keyless signature verified via Sigstore"
             return 0
         else

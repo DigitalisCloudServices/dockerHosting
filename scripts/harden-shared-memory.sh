@@ -49,7 +49,7 @@ mount | grep /dev/shm
 # Test that execution is blocked
 echo ""
 echo "[INFO] Testing execution protection..."
-if ! echo '#!/bin/sh' > /dev/shm/test.sh 2>/dev/null || ! chmod +x /dev/shm/test.sh 2>/dev/null || ! /dev/shm/test.sh 2>/dev/null; then
+if ! echo '#!/bin/sh' > /dev/shm/test.sh 2> /dev/null || ! chmod +x /dev/shm/test.sh 2> /dev/null || ! /dev/shm/test.sh 2> /dev/null; then
     echo "[INFO] ✓ Execution from /dev/shm is blocked"
     rm -f /dev/shm/test.sh
 else

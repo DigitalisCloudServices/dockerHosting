@@ -28,8 +28,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -83,8 +83,8 @@ _write_base_config() {
 
 _has_file_cert() {
     local site_name="$1"
-    [[ -f "$TRAEFIK_CERTS_DIR/${site_name}/fullchain.pem" && \
-       -f "$TRAEFIK_CERTS_DIR/${site_name}/privkey.pem" ]]
+    [[ -f "$TRAEFIK_CERTS_DIR/${site_name}/fullchain.pem" &&
+        -f "$TRAEFIK_CERTS_DIR/${site_name}/privkey.pem" ]]
 }
 
 _append_cert_config() {
@@ -93,7 +93,7 @@ _append_cert_config() {
 
     if _has_file_cert "$site_name"; then
         log_info "File cert found — adding to config"
-        cat >> "$config_file" <<EOF
+        cat >> "$config_file" << EOF
 
 tls:
   certificates:
@@ -111,8 +111,8 @@ _check_traefik_running() {
     if ! docker ps \
         --filter "name=^traefik$" \
         --filter "status=running" \
-        --format "{{.Names}}" 2>/dev/null \
-        | grep -q "^traefik$"; then
+        --format "{{.Names}}" 2> /dev/null |
+        grep -q "^traefik$"; then
         log_warn "Traefik container is not running — start it with: docker start traefik"
     fi
 }

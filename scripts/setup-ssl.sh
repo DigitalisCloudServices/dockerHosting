@@ -69,9 +69,12 @@ if [ "$USE_LETSENCRYPT" == "--letsencrypt" ]; then
     echo "[INFO] Symlinks created in: $SITE_CERT_DIR"
 
     # Setup automatic renewal
-    if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
+    if ! crontab -l 2> /dev/null | grep -q "certbot renew"; then
         echo "[INFO] Setting up automatic certificate renewal..."
-        (crontab -l 2>/dev/null || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
+        (
+            crontab -l 2> /dev/null || true
+            echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
+        ) | crontab -
         echo "[INFO] Added renewal cron job (runs daily at 3 AM)"
     fi
 

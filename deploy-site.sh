@@ -50,11 +50,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/gcs.sh
 source "${SCRIPT_DIR}/lib/gcs.sh"
 
-log_info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
+log_info() { echo -e "${GREEN}[INFO]${NC}  $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_step()  { echo -e "${BLUE}[STEP]${NC}  [$(_ts)] $1"; }
-log_note()  { echo -e "${CYAN}[NOTE]${NC}  $1"; }
+log_step() { echo -e "${BLUE}[STEP]${NC}  [$(_ts)] $1"; }
+log_note() { echo -e "${CYAN}[NOTE]${NC}  $1"; }
 
 check_root() {
     if [[ "$EUID" -ne 0 ]]; then
@@ -77,11 +77,11 @@ find_next_kong_port() {
     local port="${1:-8443}"
     local used=""
     if [[ -d /opt/apps ]]; then
-        used=$(grep -rh "^KONG_HTTPS_PORT=" /opt/apps/ 2>/dev/null | \
-               cut -d= -f2 | tr -d '"' | sort -n || true)
+        used=$(grep -rh "^KONG_HTTPS_PORT=" /opt/apps/ 2> /dev/null |
+            cut -d= -f2 | tr -d '"' | sort -n || true)
     fi
-    while echo "$used" | grep -qx "$port" || \
-          ss -tlnp 2>/dev/null | awk '{print $4}' | grep -q ":${port}$"; do
+    while echo "$used" | grep -qx "$port" ||
+        ss -tlnp 2> /dev/null | awk '{print $4}' | grep -q ":${port}$"; do
         port=$((port + 1))
     done
     echo "$port"
@@ -91,12 +91,12 @@ find_next_kong_port() {
 
 _env_get() {
     local key="$1" file="$2"
-    grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true
+    grep -E "^${key}=" "$file" 2> /dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true
 }
 
 _env_set() {
     local key="$1" value="$2" file="$3"
-    if grep -qE "^${key}=" "$file" 2>/dev/null; then
+    if grep -qE "^${key}=" "$file" 2> /dev/null; then
         sed -i "s|^${key}=.*|${key}=${value}|" "$file"
     else
         echo "${key}=${value}" >> "$file"
@@ -108,7 +108,7 @@ _env_set() {
 # Construct download URL from artifact storage config (JSON string)
 _artifact_download_url() {
     local storage_json="$1" gcs_token="$2"
-    python3 - "$storage_json" "$gcs_token" <<'PYEOF'
+    python3 - "$storage_json" "$gcs_token" << 'PYEOF'
 import json, sys
 storage = json.loads(sys.argv[1])
 storage_type = storage.get('type', 'gcs')
@@ -133,7 +133,7 @@ PYEOF
 # Extract filename from artifact storage config (JSON string)
 _artifact_filename() {
     local storage_json="$1"
-    python3 - "$storage_json" <<'PYEOF'
+    python3 - "$storage_json" << 'PYEOF'
 import json, sys, os
 storage = json.loads(sys.argv[1])
 storage_type = storage.get('type', 'gcs')
@@ -155,7 +155,7 @@ PYEOF
 # Check if storage config is a local directory
 _artifact_is_local_directory() {
     local storage_json="$1"
-    python3 - "$storage_json" <<'PYEOF'
+    python3 - "$storage_json" << 'PYEOF'
 import json, sys
 storage = json.loads(sys.argv[1])
 if storage.get('type', 'gcs') == 'local' and 'directory' in storage:
@@ -168,7 +168,7 @@ PYEOF
 # Get local directory path from storage config
 _artifact_local_path() {
     local storage_json="$1"
-    python3 - "$storage_json" <<'PYEOF'
+    python3 - "$storage_json" << 'PYEOF'
 import json, sys
 storage = json.loads(sys.argv[1])
 if storage.get('type') == 'local' and 'directory' in storage:
@@ -182,14 +182,14 @@ decrypt_artifact() {
     local bundle="$1" dest="$2" decrypt_sh="$3" secrets_dir="$4" signed="$5" encrypted="$6"
     local pub_key_file="${secrets_dir}/artifact_signing_public_key.pem"
     local aes_key_file="${secrets_dir}/artifact_aes_key.txt"
-    
+
     if [[ "${encrypted}" == "true" && "${signed}" == "true" ]]; then
         if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
             ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
             ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
             SKIP_ENCRYPTION=false \
             SKIP_SIGNATURE=false \
-            bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+                bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
         else
             log_error "Artifact requires encryption and signing but keys not found"
             exit 1
@@ -199,7 +199,7 @@ decrypt_artifact() {
             ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
             SKIP_ENCRYPTION=false \
             SKIP_SIGNATURE=true \
-            bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+                bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
         else
             log_error "Artifact requires encryption but AES key not found"
             exit 1
@@ -209,7 +209,7 @@ decrypt_artifact() {
             ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
             SKIP_ENCRYPTION=true \
             SKIP_SIGNATURE=false \
-            bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
+                bash "${decrypt_sh}" --bundle "${bundle}" --out-tar "${dest}"
         else
             log_error "Artifact requires signing but public key not found"
             exit 1
@@ -228,7 +228,7 @@ install_updater_timer() {
     local svc_name="${site_name}-updater"
     local update_site="${SCRIPT_DIR}/lib/update-site.sh"
 
-    cat > "/etc/systemd/system/${svc_name}.service" <<EOF
+    cat > "/etc/systemd/system/${svc_name}.service" << EOF
 [Unit]
 Description=${site_name} — artifact updater
 After=docker.service network-online.target
@@ -244,7 +244,7 @@ SyslogIdentifier=${svc_name}
 EOF
 
     # 15-minute poll with ±5 min random jitter (10-minute window)
-    cat > "/etc/systemd/system/${svc_name}.timer" <<EOF
+    cat > "/etc/systemd/system/${svc_name}.timer" << EOF
 [Unit]
 Description=${site_name} — check for artifact updates every 15 minutes
 
@@ -270,7 +270,7 @@ install_maintenance_timer() {
     local svc_name="${site_name}-maintenance"
     local update_site="${SCRIPT_DIR}/lib/update-site.sh"
 
-    cat > "/etc/systemd/system/${svc_name}.service" <<EOF
+    cat > "/etc/systemd/system/${svc_name}.service" << EOF
 [Unit]
 Description=${site_name} — daily maintenance hooks (cert renewal, health checks)
 After=docker.service network-online.target
@@ -285,7 +285,7 @@ StandardError=journal
 SyslogIdentifier=${svc_name}
 EOF
 
-    cat > "/etc/systemd/system/${svc_name}.timer" <<EOF
+    cat > "/etc/systemd/system/${svc_name}.timer" << EOF
 [Unit]
 Description=${site_name} — run maintenance hooks daily
 
@@ -307,18 +307,21 @@ EOF
 add_update_now_sudoers() {
     local site_user="$1" site_name="$2"
     local sudoers_file="/etc/sudoers.d/updater-${site_user}"
-    cat > "$sudoers_file" <<EOF
+    cat > "$sudoers_file" << EOF
 ${site_user} ALL=(root) NOPASSWD: /usr/bin/systemctl start ${site_name}-updater.service
 EOF
     chmod 0440 "$sudoers_file"
     chown root:root "$sudoers_file"
-    visudo -c -f "$sudoers_file" 2>/dev/null || { rm -f "$sudoers_file"; log_warn "sudoers validation failed"; }
+    visudo -c -f "$sudoers_file" 2> /dev/null || {
+        rm -f "$sudoers_file"
+        log_warn "sudoers validation failed"
+    }
 }
 
 create_update_now_helper() {
     local site_name="$1" helpers_dir="$2" site_user="$3"
     mkdir -p "$helpers_dir"
-    cat > "${helpers_dir}/update-now" <<HELPER
+    cat > "${helpers_dir}/update-now" << HELPER
 #!/bin/bash
 echo "[${site_name}] Triggering update check..."
 sudo systemctl start ${site_name}-updater.service
@@ -349,52 +352,117 @@ parse_args() {
     CREATE_USER="yes"
     ADD_DOCKER_GROUP="no"
     SETUP_LOGROTATE="yes"
-    SETUP_TIMER=""   # defaulted in apply_defaults based on mode
+    SETUP_TIMER="" # defaulted in apply_defaults based on mode
     FORCE_BOOTSTRAP=false
 
     if [[ $# -eq 0 ]]; then return 0; fi
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --site-name)        SITE_NAME="$2";     shift 2 ;;
-            --mode)             DEPLOY_MODE="$2";   shift 2 ;;
-            --site-user)        SITE_USER="$2";     shift 2 ;;
-            --deploy-dir)       DEPLOY_DIR="$2";    shift 2 ;;
-            --domain)           DOMAIN="$2";        shift 2 ;;
-            --kong-port)        KONG_PORT="$2";     shift 2 ;;
-            --gcs-bucket)       GCS_BUCKET="$2";       shift 2 ;;
-            --gcs-prefix)       GCS_PREFIX="$2";       shift 2 ;;
-            --gcs-key-file)     GCS_KEY_FILE="$2";    shift 2 ;;
-            --channel)          RELEASE_CHANNEL="$2"; shift 2 ;;
-            --ar-registry)      AR_REGISTRY="$2";     shift 2 ;;
-            --artifact-aes-key-file)         ARTIFACT_AES_KEY_FILE="$2";         shift 2 ;;
-            --artifact-signing-pub-key-file) ARTIFACT_SIGNING_PUB_KEY_FILE="$2"; shift 2 ;;
-            --create-user)      CREATE_USER="$2";   shift 2 ;;
-            --setup-logrotate)  SETUP_LOGROTATE="$2"; shift 2 ;;
-            --setup-timer)      SETUP_TIMER="$2";   shift 2 ;;
-            --force)            FORCE_BOOTSTRAP=true; shift ;;
-            --non-interactive)  NON_INTERACTIVE=true; shift ;;
-            --help|-h)
+            --site-name)
+                SITE_NAME="$2"
+                shift 2
+                ;;
+            --mode)
+                DEPLOY_MODE="$2"
+                shift 2
+                ;;
+            --site-user)
+                SITE_USER="$2"
+                shift 2
+                ;;
+            --deploy-dir)
+                DEPLOY_DIR="$2"
+                shift 2
+                ;;
+            --domain)
+                DOMAIN="$2"
+                shift 2
+                ;;
+            --kong-port)
+                KONG_PORT="$2"
+                shift 2
+                ;;
+            --gcs-bucket)
+                GCS_BUCKET="$2"
+                shift 2
+                ;;
+            --gcs-prefix)
+                GCS_PREFIX="$2"
+                shift 2
+                ;;
+            --gcs-key-file)
+                GCS_KEY_FILE="$2"
+                shift 2
+                ;;
+            --channel)
+                RELEASE_CHANNEL="$2"
+                shift 2
+                ;;
+            --ar-registry)
+                AR_REGISTRY="$2"
+                shift 2
+                ;;
+            --artifact-aes-key-file)
+                ARTIFACT_AES_KEY_FILE="$2"
+                shift 2
+                ;;
+            --artifact-signing-pub-key-file)
+                ARTIFACT_SIGNING_PUB_KEY_FILE="$2"
+                shift 2
+                ;;
+            --create-user)
+                CREATE_USER="$2"
+                shift 2
+                ;;
+            --setup-logrotate)
+                SETUP_LOGROTATE="$2"
+                shift 2
+                ;;
+            --setup-timer)
+                SETUP_TIMER="$2"
+                shift 2
+                ;;
+            --force)
+                FORCE_BOOTSTRAP=true
+                shift
+                ;;
+            --non-interactive)
+                NON_INTERACTIVE=true
+                shift
+                ;;
+            --help | -h)
                 grep '^#   ' "$0" | sed 's/^#   //'
-                exit 0 ;;
+                exit 0
+                ;;
             *)
                 log_error "Unknown argument: $1"
                 echo "Run with --help for usage."
-                exit 1 ;;
+                exit 1
+                ;;
         esac
     done
 
-    [[ "$DEPLOY_MODE" == "production" || "$DEPLOY_MODE" == "development" ]] \
-        || { log_error "--mode must be 'production' or 'development'"; exit 1; }
+    [[ "$DEPLOY_MODE" == "production" || "$DEPLOY_MODE" == "development" ]] ||
+        {
+            log_error "--mode must be 'production' or 'development'"
+            exit 1
+        }
 
     # Auto non-interactive: production needs site-name + gcs-key-file; dev needs just site-name
     if [[ -n "$SITE_NAME" && "$DEPLOY_MODE" == "development" ]]; then NON_INTERACTIVE=true; fi
     if [[ -n "$SITE_NAME" && -n "$GCS_KEY_FILE" ]]; then NON_INTERACTIVE=true; fi
 
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        [[ -n "$SITE_NAME" ]] || { log_error "--site-name required"; exit 1; }
+        [[ -n "$SITE_NAME" ]] || {
+            log_error "--site-name required"
+            exit 1
+        }
         if [[ "$DEPLOY_MODE" == "production" ]]; then
-            [[ -n "$GCS_KEY_FILE" ]] || { log_error "--gcs-key-file required in production mode"; exit 1; }
+            [[ -n "$GCS_KEY_FILE" ]] || {
+                log_error "--gcs-key-file required in production mode"
+                exit 1
+            }
         fi
     fi
 }
@@ -453,15 +521,15 @@ gather_interactive() {
         local input_key
         read -rp "Path to AES-256 key file (base64) [blank to skip]: " input_key
         if [[ -n "$input_key" ]]; then
-            [[ -f "$input_key" ]] \
-                && ARTIFACT_AES_KEY_FILE="$input_key" \
-                || log_warn "File not found: $input_key — skipping"
+            [[ -f "$input_key" ]] &&
+                ARTIFACT_AES_KEY_FILE="$input_key" ||
+                log_warn "File not found: $input_key — skipping"
         fi
         read -rp "Path to RSA public key file (PEM) [blank to skip]: " input_key
         if [[ -n "$input_key" ]]; then
-            [[ -f "$input_key" ]] \
-                && ARTIFACT_SIGNING_PUB_KEY_FILE="$input_key" \
-                || log_warn "File not found: $input_key — skipping"
+            [[ -f "$input_key" ]] &&
+                ARTIFACT_SIGNING_PUB_KEY_FILE="$input_key" ||
+                log_warn "File not found: $input_key — skipping"
         fi
     fi
 
@@ -510,10 +578,19 @@ main() {
     fi
     apply_defaults
 
-    [[ -n "$SITE_NAME" ]] || { log_error "Site name is required"; exit 1; }
+    [[ -n "$SITE_NAME" ]] || {
+        log_error "Site name is required"
+        exit 1
+    }
     if [[ "$DEPLOY_MODE" == "production" ]]; then
-        [[ -n "$GCS_KEY_FILE" ]] || { log_error "GCS service account key required in production mode"; exit 1; }
-        [[ -f "$GCS_KEY_FILE" ]] || { log_error "GCS key file not found: $GCS_KEY_FILE"; exit 1; }
+        [[ -n "$GCS_KEY_FILE" ]] || {
+            log_error "GCS service account key required in production mode"
+            exit 1
+        }
+        [[ -f "$GCS_KEY_FILE" ]] || {
+            log_error "GCS key file not found: $GCS_KEY_FILE"
+            exit 1
+        }
     fi
 
     # Kong port
@@ -535,28 +612,31 @@ main() {
     log_info "════════════════════════════════════════════"
     log_info "Deployment plan:"
     log_info "════════════════════════════════════════════"
-    printf "  %-20s %s\n" "Mode:"          "$DEPLOY_MODE"
-    printf "  %-20s %s\n" "Site name:"     "$SITE_NAME"
-    printf "  %-20s %s\n" "Deploy dir:"    "$DEPLOY_DIR"
-    printf "  %-20s %s\n" "System user:"   "$SITE_USER (nologin)"
-    printf "  %-20s %s\n" "Kong port:"     "$KONG_PORT"
-    printf "  %-20s %s\n" "Domain:"        "${DOMAIN:-(not set)}"
+    printf "  %-20s %s\n" "Mode:" "$DEPLOY_MODE"
+    printf "  %-20s %s\n" "Site name:" "$SITE_NAME"
+    printf "  %-20s %s\n" "Deploy dir:" "$DEPLOY_DIR"
+    printf "  %-20s %s\n" "System user:" "$SITE_USER (nologin)"
+    printf "  %-20s %s\n" "Kong port:" "$KONG_PORT"
+    printf "  %-20s %s\n" "Domain:" "${DOMAIN:-(not set)}"
     if [[ "$DEPLOY_MODE" == "production" ]]; then
-        printf "  %-20s %s\n" "GCS bucket:"    "$GCS_BUCKET"
-        [[ -n "$GCS_PREFIX" ]] && printf "  %-20s %s\n" "GCS prefix:"    "$GCS_PREFIX"
-        printf "  %-20s %s\n" "Channel:"       "$RELEASE_CHANNEL"
-        printf "  %-20s %s\n" "GCS key:"       "$GCS_KEY_FILE"
-        printf "  %-20s %s\n" "AES key:"       "${ARTIFACT_AES_KEY_FILE:-(not set — encrypted artifacts will fail)}"
-        printf "  %-20s %s\n" "Signing key:"   "${ARTIFACT_SIGNING_PUB_KEY_FILE:-(not set — encrypted artifacts will fail)}"
+        printf "  %-20s %s\n" "GCS bucket:" "$GCS_BUCKET"
+        [[ -n "$GCS_PREFIX" ]] && printf "  %-20s %s\n" "GCS prefix:" "$GCS_PREFIX"
+        printf "  %-20s %s\n" "Channel:" "$RELEASE_CHANNEL"
+        printf "  %-20s %s\n" "GCS key:" "$GCS_KEY_FILE"
+        printf "  %-20s %s\n" "AES key:" "${ARTIFACT_AES_KEY_FILE:-(not set — encrypted artifacts will fail)}"
+        printf "  %-20s %s\n" "Signing key:" "${ARTIFACT_SIGNING_PUB_KEY_FILE:-(not set — encrypted artifacts will fail)}"
         printf "  %-20s %s\n" "Updater timer:" "$SETUP_TIMER (15 min ±5)"
     fi
-    printf "  %-20s %s\n" "Logrotate:"     "$SETUP_LOGROTATE"
+    printf "  %-20s %s\n" "Logrotate:" "$SETUP_LOGROTATE"
     log_info "════════════════════════════════════════════"
     echo ""
 
     if [[ "$NON_INTERACTIVE" != "true" ]]; then
         read -rp "Proceed? [Y/n]: " input
-        if [[ "${input,,}" == "n" ]]; then log_warn "Deployment cancelled"; exit 0; fi
+        if [[ "${input,,}" == "n" ]]; then
+            log_warn "Deployment cancelled"
+            exit 0
+        fi
     fi
 
     # ── Replay command ────────────────────────────────────────────────────────
@@ -589,7 +669,7 @@ main() {
     log_step "1/8  User management"
 
     if [[ "$CREATE_USER" == "yes" ]]; then
-        if id "$SITE_USER" &>/dev/null; then
+        if id "$SITE_USER" &> /dev/null; then
             log_info "User '$SITE_USER' already exists"
         else
             useradd -r -M -d "$DEPLOY_DIR" -s /usr/sbin/nologin "$SITE_USER"
@@ -600,8 +680,11 @@ main() {
             log_warn "Added $SITE_USER to docker group"
         fi
     else
-        id "$SITE_USER" &>/dev/null \
-            || { log_error "User '$SITE_USER' does not exist"; exit 1; }
+        id "$SITE_USER" &> /dev/null ||
+            {
+                log_error "User '$SITE_USER' does not exist"
+                exit 1
+            }
     fi
 
     # ════════════════════════════════════════════════════════════════════════
@@ -612,8 +695,11 @@ main() {
         log_step "2/8  Authenticating to GCS and fetching channel metadata"
 
         log_info "Obtaining GCS access token..."
-        GCS_TOKEN="$(_gcs_access_token "${GCS_KEY_FILE}")" \
-            || { log_error "Failed to obtain GCS access token — check service account key"; exit 1; }
+        GCS_TOKEN="$(_gcs_access_token "${GCS_KEY_FILE}")" ||
+            {
+                log_error "Failed to obtain GCS access token — check service account key"
+                exit 1
+            }
 
         log_info "Fetching ${GCS_BASE}/channels/${RELEASE_CHANNEL}.json..."
         CHANNEL_META="$(curl -fsSL \
@@ -626,11 +712,11 @@ main() {
         INFRA_SIGNED="$(echo "${INFRA_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('signed', True))" | tr '[:upper:]' '[:lower:]')"
         INFRA_ENCRYPTED="$(echo "${INFRA_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('encrypted', True))" | tr '[:upper:]' '[:lower:]')"
         INFRA_STORAGE="$(echo "${INFRA_JSON}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({k:v for k,v in d.items() if k in ('type','bucket','path','directory','url')}))")"
-        
+
         INFRA_ARTIFACT="$(_artifact_filename "${INFRA_STORAGE}")"
         INFRA_IS_LOCAL="$(_artifact_is_local_directory "${INFRA_STORAGE}")"
         INFRA_DOWNLOAD_URL="$(_artifact_download_url "${INFRA_STORAGE}" "${GCS_TOKEN}")"
-        
+
         if [[ "${INFRA_IS_LOCAL}" == "true" ]]; then
             INFRA_LOCAL_PATH="$(_artifact_local_path "${INFRA_STORAGE}")"
             log_info "Channel metadata: infra=local directory at ${INFRA_LOCAL_PATH} (git_hash=${INFRA_HASH:0:12})"
@@ -654,12 +740,12 @@ main() {
         if [[ "${INFRA_IS_LOCAL}" == "true" ]]; then
             # Local directory mode - copy from existing filesystem location
             log_info "Using local infra directory: ${INFRA_LOCAL_PATH}"
-            
+
             if [[ ! -d "${INFRA_LOCAL_PATH}" ]]; then
                 log_error "Local infra directory does not exist: ${INFRA_LOCAL_PATH}"
                 exit 1
             fi
-            
+
             log_info "Copying infra from ${INFRA_LOCAL_PATH} to ${DEPLOY_DIR}..."
             cp -r "${INFRA_LOCAL_PATH}"/* "${DEPLOY_DIR}/"
             log_info "Infra copied from local directory"
@@ -668,29 +754,32 @@ main() {
             log_info "Downloading infra artifact..."
             local infra_tmp
             infra_tmp=$(mktemp /tmp/infra-XXXXXX.tar.gz.download)
-            
+
             curl -fsSL --retry 3 --retry-delay 5 \
                 -H "Authorization: Bearer ${GCS_TOKEN}" \
                 -o "${infra_tmp}" \
                 "${INFRA_DOWNLOAD_URL}"
 
             local decrypt_bootstrap="${SCRIPT_DIR}/lib/decrypt.sh"
-            [[ -f "${decrypt_bootstrap}" ]] || { log_error "Bundled decrypt.sh missing: ${decrypt_bootstrap}"; exit 1; }
+            [[ -f "${decrypt_bootstrap}" ]] || {
+                log_error "Bundled decrypt.sh missing: ${decrypt_bootstrap}"
+                exit 1
+            }
 
             if [[ "${INFRA_ENCRYPTED}" == "true" || "${INFRA_SIGNED}" == "true" ]]; then
-                if [[ "${INFRA_ENCRYPTED}" == "true" && ( -z "${ARTIFACT_AES_KEY_FILE}" || ! -f "${ARTIFACT_AES_KEY_FILE}" ) ]]; then
+                if [[ "${INFRA_ENCRYPTED}" == "true" && (-z "${ARTIFACT_AES_KEY_FILE}" || ! -f "${ARTIFACT_AES_KEY_FILE}") ]]; then
                     log_error "Infra artifact requires encryption but no AES key provided."
                     log_error "Re-run with: --artifact-aes-key-file <path>"
                     rm -f "${infra_tmp}"
                     exit 1
                 fi
-                if [[ "${INFRA_SIGNED}" == "true" && ( -z "${ARTIFACT_SIGNING_PUB_KEY_FILE}" || ! -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ) ]]; then
+                if [[ "${INFRA_SIGNED}" == "true" && (-z "${ARTIFACT_SIGNING_PUB_KEY_FILE}" || ! -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}") ]]; then
                     log_error "Infra artifact requires signing but no public key provided."
                     log_error "Re-run with: --artifact-signing-pub-key-file <path>"
                     rm -f "${infra_tmp}"
                     exit 1
                 fi
-                
+
                 # Copy crypto keys to secrets directory before decryption
                 if [[ -n "${ARTIFACT_AES_KEY_FILE}" && -f "${ARTIFACT_AES_KEY_FILE}" ]]; then
                     cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
@@ -702,7 +791,7 @@ main() {
                     chmod 644 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
                     chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
                 fi
-                
+
                 log_info "Verifying and decrypting infra artifact..."
                 decrypt_artifact "${infra_tmp}" "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" \
                     "${decrypt_bootstrap}" "${DEPLOY_DIR}/infra/secrets" "${INFRA_SIGNED}" "${INFRA_ENCRYPTED}"
@@ -798,9 +887,9 @@ main() {
         log_info "Authenticating Docker to ${AR_REGISTRY}..."
         cat "${GCS_KEY_FILE}" | docker login "${AR_REGISTRY}" \
             --username _json_key \
-            --password-stdin \
-            && log_info "Docker registry auth OK" \
-            || log_warn "Docker registry auth failed — check service account has Artifact Registry Reader role"
+            --password-stdin &&
+            log_info "Docker registry auth OK" ||
+            log_warn "Docker registry auth failed — check service account has Artifact Registry Reader role"
     else
         log_step "5/8  Secrets (skipped — development mode)"
     fi
@@ -817,9 +906,9 @@ main() {
     local env_file="${DEPLOY_DIR}/.env"
     if [[ ! -f "$env_file" ]]; then touch "$env_file"; fi
 
-    _env_set "COMPOSE_PROJECT_NAME" "$SITE_NAME"   "$env_file"
-    _env_set "KONG_HTTPS_PORT"      "$KONG_PORT"   "$env_file"
-    _env_set "DEPLOY_MODE"          "$DEPLOY_MODE" "$env_file"
+    _env_set "COMPOSE_PROJECT_NAME" "$SITE_NAME" "$env_file"
+    _env_set "KONG_HTTPS_PORT" "$KONG_PORT" "$env_file"
+    _env_set "DEPLOY_MODE" "$DEPLOY_MODE" "$env_file"
     if [[ -n "$DOMAIN" ]]; then _env_set "SITE_HOSTNAME" "$DOMAIN" "$env_file"; fi
     if [[ "$DEPLOY_MODE" == "production" ]]; then _env_set "AR_REGISTRY" "$AR_REGISTRY" "$env_file"; fi
 
@@ -827,31 +916,38 @@ main() {
     chown root:root "$env_file"
 
     if [[ "$DEPLOY_MODE" == "production" ]]; then
-        _env_set "GCS_BUCKET"      "$GCS_BUCKET"      "$env_file"
-        _env_set "GCS_PREFIX"      "$GCS_PREFIX"      "$env_file"
+        _env_set "GCS_BUCKET" "$GCS_BUCKET" "$env_file"
+        _env_set "GCS_PREFIX" "$GCS_PREFIX" "$env_file"
         _env_set "RELEASE_CHANNEL" "$RELEASE_CHANNEL" "$env_file"
-        _env_set "INFRA_HASH"      "$INFRA_HASH"                           "$env_file"
-        _env_set "INFRA_SIGNED"    "$INFRA_SIGNED"                         "$env_file"
-        _env_set "INFRA_ENCRYPTED" "$INFRA_ENCRYPTED"                      "$env_file"
-        _env_set "INFRA_ARTIFACT"  "./artifact-cache/${INFRA_ARTIFACT}"    "$env_file"
+        _env_set "INFRA_HASH" "$INFRA_HASH" "$env_file"
+        _env_set "INFRA_SIGNED" "$INFRA_SIGNED" "$env_file"
+        _env_set "INFRA_ENCRYPTED" "$INFRA_ENCRYPTED" "$env_file"
+        _env_set "INFRA_ARTIFACT" "./artifact-cache/${INFRA_ARTIFACT}" "$env_file"
 
         log_info "Running initial artifact download and stack start..."
         local update_site="${SCRIPT_DIR}/lib/update-site.sh"
-        [[ -f "${update_site}" ]] || { log_error "update-site.sh not found at ${update_site}"; exit 1; }
-        
+        [[ -f "${update_site}" ]] || {
+            log_error "update-site.sh not found at ${update_site}"
+            exit 1
+        }
+
         local update_args="--trigger bootstrap --always-run-hooks"
         [[ "${FORCE_BOOTSTRAP}" == "true" ]] && update_args="${update_args} --force"
-        
-        bash "${update_site}" "${DEPLOY_DIR}" ${update_args} \
-            || { log_error "update-site.sh failed — check logs above"; exit 1; }
 
-        _bad=$(docker compose -f "${DEPLOY_DIR}/docker-compose.yml" ps --format json 2>/dev/null \
-            | python3 -c "
+        bash "${update_site}" "${DEPLOY_DIR}" ${update_args} ||
+            {
+                log_error "update-site.sh failed — check logs above"
+                exit 1
+            }
+
+        _bad=$(docker compose -f "${DEPLOY_DIR}/docker-compose.yml" ps --format json 2> /dev/null |
+            python3 -c "
 import json, sys
 bad = []
 for line in sys.stdin:
     line = line.strip()
-    if not line: continue
+    if not line:
+        continue
     try:
         s = json.loads(line)
         n = s.get('Name') or s.get('Service', '')
@@ -859,7 +955,7 @@ for line in sys.stdin:
             bad.append(n)
     except: pass
 print(' '.join(bad))
-" 2>/dev/null || true)
+" 2> /dev/null || true)
         [[ -n "${_bad}" ]] && log_warn "Post-deploy health check: these services are not running/healthy: ${_bad}"
     else
         log_info ".env written with infrastructure settings"
@@ -881,14 +977,17 @@ print(' '.join(bad))
         if [[ "$NON_INTERACTIVE" != "true" ]]; then
             read -rp "  [Y] Run now  [e] Edit  [n] Skip  [Y/e/n]: " input
             case "${input,,}" in
-                ""|y)
-                    [[ -f "$traefik_script" ]] && bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME" \
-                        || log_warn "add-traefik-site.sh not found"
+                "" | y)
+                    [[ -f "$traefik_script" ]] && bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME" ||
+                        log_warn "add-traefik-site.sh not found"
                     ;;
                 e)
-                    read -rp "  Domain [${DOMAIN}]: " ed; DOMAIN="${ed:-$DOMAIN}"
-                    read -rp "  Port   [${KONG_PORT}]: " ep; KONG_PORT="${ep:-$KONG_PORT}"
-                    if [[ -f "$traefik_script" ]]; then bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME"
+                    read -rp "  Domain [${DOMAIN}]: " ed
+                    DOMAIN="${ed:-$DOMAIN}"
+                    read -rp "  Port   [${KONG_PORT}]: " ep
+                    KONG_PORT="${ep:-$KONG_PORT}"
+                    if [[ -f "$traefik_script" ]]; then
+                        bash "$traefik_script" "$DOMAIN" "$KONG_PORT" "$SITE_NAME"
                     else log_warn "add-traefik-site.sh not found"; fi
                     ;;
                 n) log_note "Skipping Traefik — run manually: $traefik_cmd" ;;
@@ -929,9 +1028,11 @@ print(' '.join(bad))
     printf "  %-20s %s\n" "Site:" "$SITE_NAME"
     printf "  %-20s %s\n" "Directory:" "$DEPLOY_DIR"
     printf "  %-20s %s\n" "System user:" "$SITE_USER (nologin)"
-    if [[ -n "$DOMAIN" ]]; then printf "  %-20s %s\n" "Domain:" "$DOMAIN"; fi
+    if [[ -n "$DOMAIN" ]]; then
+        printf "  %-20s %s\n" "Domain:" "$DOMAIN"
+    fi
     printf "  %-20s %s\n" "Kong port:" "$KONG_PORT"
-    printf "  %-20s %s\n" "Elapsed:" "$(( $(date +%s) - _DEPLOY_START ))s"
+    printf "  %-20s %s\n" "Elapsed:" "$(($(date +%s) - _DEPLOY_START))s"
     echo ""
     log_info "Next steps:"
     if [[ "$DEPLOY_MODE" == "development" ]]; then

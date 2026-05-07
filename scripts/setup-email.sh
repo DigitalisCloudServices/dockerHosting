@@ -41,7 +41,9 @@ echo "╚═══════════════════════�
 echo ""
 
 FORCE=false
-for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+for arg in "$@"; do
+    [[ "$arg" == "--force" ]] && FORCE=true
+done
 
 if [[ "$FORCE" == false ]] && [[ -f /etc/msmtprc ]]; then
     log_info "Email already configured (/etc/msmtprc exists) — skipping (use --force to reconfigure)"
@@ -97,7 +99,7 @@ apt-get install -y msmtp msmtp-mta mailutils bsd-mailx
 
 # Create msmtp configuration
 log_info "Configuring msmtp..."
-cat > /etc/msmtprc <<EOF
+cat > /etc/msmtprc << EOF
 # msmtp system-wide configuration
 # Created by dockerHosting setup
 
@@ -129,11 +131,11 @@ log_info "msmtp configuration secured (600 root:root)"
 # Create log file
 touch /var/log/msmtp.log
 chmod 660 /var/log/msmtp.log
-chown root:msmtp /var/log/msmtp.log 2>/dev/null || chown root:root /var/log/msmtp.log
+chown root:msmtp /var/log/msmtp.log 2> /dev/null || chown root:root /var/log/msmtp.log
 
 # Configure mail aliases to forward root mail
 log_info "Configuring mail aliases..."
-cat > /etc/aliases <<EOF
+cat > /etc/aliases << EOF
 # Mail aliases
 # Forward all root emails to configured address
 root: ${ROOT_EMAIL}
@@ -152,7 +154,7 @@ ln -sf /usr/bin/msmtp /usr/bin/sendmail
 
 # Configure log rotation for msmtp
 log_info "Configuring log rotation..."
-cat > /etc/logrotate.d/msmtp <<'LOGEOF'
+cat > /etc/logrotate.d/msmtp << 'LOGEOF'
 /var/log/msmtp.log {
     daily
     rotate 14
@@ -169,7 +171,7 @@ LOGEOF
 
 # Test email configuration
 log_info "Testing email configuration..."
-echo "This is a test email from your dockerHosting server at $(hostname)" | \
+echo "This is a test email from your dockerHosting server at $(hostname)" |
     mail -s "Test Email from $(hostname)" "$ROOT_EMAIL" || {
     log_warn "Test email may have failed. Check /var/log/msmtp.log"
 }

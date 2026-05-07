@@ -10,9 +10,11 @@ export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 set -e
 
 FORCE=false
-for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+for arg in "$@"; do
+    [[ "$arg" == "--force" ]] && FORCE=true
+done
 
-if [[ "$FORCE" == false ]] && command -v docker &>/dev/null && systemctl is-active --quiet docker 2>/dev/null; then
+if [[ "$FORCE" == false ]] && command -v docker &> /dev/null && systemctl is-active --quiet docker 2> /dev/null; then
     echo "[INFO] Docker is already installed and running — skipping (use --force to reinstall)"
     docker --version
     docker compose version
@@ -34,9 +36,9 @@ chmod a+r /etc/apt/keyrings/docker.asc
 
 # Add Docker repository to apt sources
 echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" |
+    tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 # Update package index with Docker repo
 apt-get update
@@ -60,14 +62,14 @@ apt-get install -y \
 # starving them. Applied to both daemon and containerd (where container processes
 # actually live).
 mkdir -p /etc/systemd/system/docker.service.d
-cat > /etc/systemd/system/docker.service.d/resource-limits.conf <<'EOF'
+cat > /etc/systemd/system/docker.service.d/resource-limits.conf << 'EOF'
 [Service]
 CPUWeight=20
 IOWeight=20
 EOF
 
 mkdir -p /etc/systemd/system/containerd.service.d
-cat > /etc/systemd/system/containerd.service.d/resource-limits.conf <<'EOF'
+cat > /etc/systemd/system/containerd.service.d/resource-limits.conf << 'EOF'
 [Service]
 CPUWeight=20
 IOWeight=20

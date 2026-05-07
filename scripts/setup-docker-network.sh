@@ -55,7 +55,7 @@ echo "[INFO] Created isolated Docker network: $NETWORK_NAME"
 
 # Record the bridge mapping so the hash is always reversible
 mkdir -p "${REGISTRY_DIR}"
-cat > "${REGISTRY_FILE}" <<EOF
+cat > "${REGISTRY_FILE}" << EOF
 site_name=${SITE_NAME}
 network_name=${NETWORK_NAME}
 bridge_name=${BRIDGE_NAME}

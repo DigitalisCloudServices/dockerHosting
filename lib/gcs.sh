@@ -14,7 +14,7 @@ _gcs_https_url() { printf 'https://storage.googleapis.com/%s' "${1#gs://}"; }
 # Exchange a service account JSON key for a short-lived OAuth2 Bearer token.
 _gcs_access_token_uncached() {
     local sa_file="$1"
-    python3 - "$sa_file" <<'PYEOF'
+    python3 - "$sa_file" << 'PYEOF'
 import sys, json, time, base64, subprocess, urllib.request, urllib.parse, tempfile, os
 
 sa = json.load(open(sys.argv[1]))
@@ -77,7 +77,7 @@ _gcs_access_token() {
 
     if [[ -f "${cache_file}" ]]; then
         now="$(date +%s)"
-        age=$(( now - $(stat -c %Y "${cache_file}" 2>/dev/null || echo 0) ))
+        age=$((now - $(stat -c %Y "${cache_file}" 2> /dev/null || echo 0)))
         if [[ "${age}" -lt 3300 ]]; then
             cat "${cache_file}"
             return 0

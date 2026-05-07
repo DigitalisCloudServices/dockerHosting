@@ -17,13 +17,13 @@ fi
 echo "[INFO] Recovering Docker configuration..."
 
 # Find the most recent backup
-BACKUP=$(ls -t /etc/docker/daemon.json.backup.* 2>/dev/null | head -n1)
+BACKUP=$(ls -t /etc/docker/daemon.json.backup.* 2> /dev/null | head -n1)
 
 if [ -z "$BACKUP" ]; then
     echo "[WARN] No backup found, creating minimal working configuration..."
 
     # Create minimal daemon.json
-    cat > /etc/docker/daemon.json <<'EOF'
+    cat > /etc/docker/daemon.json << 'EOF'
 {
   "log-driver": "json-file",
   "log-opts": {

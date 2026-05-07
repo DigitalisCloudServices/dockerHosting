@@ -17,26 +17,26 @@ check_function_docs() {
         saw_comment=1
         comment_line=NR
     }
-    
+
     # Function definition
     /^[a-zA-Z_][a-zA-Z0-9_]*\s*\(\)/ {
         start=NR
         fname=$1
         gsub(/\(\)/, "", fname)
-        
+
         # Skip private functions
         if (fname ~ /^_/) {
             start=0
             next
         }
-        
+
         # Check if comment was within 2 lines before function
         if (saw_comment && (start - comment_line) <= 2) {
             has_doc[fname]=1
         }
         saw_comment=0
     }
-    
+
     /^}$/ && start {
         len=NR-start-1
         if (len >= min && !has_doc[fname]) {

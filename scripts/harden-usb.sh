@@ -58,7 +58,7 @@ EOF
 echo "[INFO] Written: $CONF_FILE"
 
 # Rebuild initramfs so the blacklist takes effect on next boot
-if command -v update-initramfs &>/dev/null; then
+if command -v update-initramfs &> /dev/null; then
     echo "[INFO] Rebuilding initramfs..."
     update-initramfs -u
     echo "[INFO] Initramfs updated."
@@ -67,7 +67,7 @@ fi
 # Warn if any of the modules are currently loaded (requires reboot to unload)
 LOADED=()
 for mod in usb_storage firewire_core firewire_ohci firewire_sbp2 thunderbolt; do
-    if lsmod 2>/dev/null | grep -q "^${mod} "; then
+    if lsmod 2> /dev/null | grep -q "^${mod} "; then
         LOADED+=("$mod")
     fi
 done

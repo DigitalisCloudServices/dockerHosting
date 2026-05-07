@@ -24,7 +24,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ _domain_to_site_name() {
 _list_sites() {
     local sites
     sites=$(find "$TRAEFIK_DYNAMIC_DIR" -maxdepth 1 -name "*.yml" -not -name "middleware.yml" \
-        -exec basename {} .yml \; 2>/dev/null | sort)
+        -exec basename {} .yml \; 2> /dev/null | sort)
     if [[ -z "$sites" ]]; then
         echo "  (none)"
     else

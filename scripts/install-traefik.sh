@@ -43,15 +43,15 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # ── nginx detection ─────────────────────────────────────────────────────────
 
 _nginx_is_present() {
-    dpkg -l nginx 2>/dev/null | grep -q "^ii" && return 0
-    systemctl is-active --quiet nginx 2>/dev/null && return 0
+    dpkg -l nginx 2> /dev/null | grep -q "^ii" && return 0
+    systemctl is-active --quiet nginx 2> /dev/null && return 0
     return 1
 }
 
@@ -61,7 +61,7 @@ _backup_nginx() {
     local backup_dir
     backup_dir="/root/nginx-backup-$(date +%Y%m%d-%H%M%S)"
     local nginx_version
-    nginx_version=$(dpkg -l nginx 2>/dev/null | awk '/^ii/{print $3}' | head -1 || echo "unknown")
+    nginx_version=$(dpkg -l nginx 2> /dev/null | awk '/^ii/{print $3}' | head -1 || echo "unknown")
     cp -r /etc/nginx "$backup_dir"
     log_info "Backup: $backup_dir (nginx version: $nginx_version)"
     log_warn "Rollback: apt-get install nginx=$nginx_version && cp -r $backup_dir/ /etc/nginx/"
@@ -69,8 +69,8 @@ _backup_nginx() {
 
 _stop_nginx() {
     log_info "Stopping nginx..."
-    systemctl stop nginx 2>/dev/null || true
-    systemctl disable nginx 2>/dev/null || true
+    systemctl stop nginx 2> /dev/null || true
+    systemctl disable nginx 2> /dev/null || true
 }
 
 # Process one nginx conf file. Appends to global MIGRATION_WARNINGS array.
@@ -78,9 +78,9 @@ _migrate_one_site() {
     local conf="$1"
     local domain port site_name cert_src
 
-    domain=$(grep -oE 'server_name[[:space:]]+[^;]+' "$conf" 2>/dev/null | awk '{print $2}' | head -1 || true)
-    port=$(grep -oE 'proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):[0-9]+' "$conf" 2>/dev/null \
-           | grep -oE '[0-9]+$' | head -1 || true)
+    domain=$(grep -oE 'server_name[[:space:]]+[^;]+' "$conf" 2> /dev/null | awk '{print $2}' | head -1 || true)
+    port=$(grep -oE 'proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):[0-9]+' "$conf" 2> /dev/null |
+        grep -oE '[0-9]+$' | head -1 || true)
 
     if [[ -z "$domain" || "$domain" == "_" ]]; then
         log_warn "Skipping $conf — no server_name found"
@@ -102,11 +102,11 @@ _migrate_one_site() {
         log_info "  Linked certs: $cert_src"
     fi
 
-    if grep -qE 'location[[:space:]]' "$conf" 2>/dev/null; then
+    if grep -qE 'location[[:space:]]' "$conf" 2> /dev/null; then
         MIGRATION_WARNINGS+=("  ⚠  $(basename "$conf") — custom location blocks; add equivalent Traefik middleware manually")
     fi
 
-    if grep -q 'limit_req' "$conf" 2>/dev/null; then
+    if grep -q 'limit_req' "$conf" 2> /dev/null; then
         MIGRATION_WARNINGS+=("  ⚠  $(basename "$conf") — limit_req detected; review rate-limit middleware in $TRAEFIK_DYNAMIC_DIR/middleware.yml")
     fi
 
@@ -119,7 +119,7 @@ _migrate_nginx_sites() {
     local conf
     while IFS= read -r -d '' conf; do
         _migrate_one_site "$conf"
-    done < <(find "$NGINX_SITES_DIR" -maxdepth 1 -type f -print0 2>/dev/null || true)
+    done < <(find "$NGINX_SITES_DIR" -maxdepth 1 -type f -print0 2> /dev/null || true)
 }
 
 _handle_certbot_cron() {
@@ -131,8 +131,8 @@ _remove_deployed_helpers() {
     [[ -d "$DEPLOYED_APPS_DIR" ]] || return 0
     log_info "Removing nginx helper scripts from deployed sites..."
     find "$DEPLOYED_APPS_DIR" -maxdepth 3 \( -name "nginx-reload" -o -name "nginx-status" \) \
-        -print0 2>/dev/null \
-        | while IFS= read -r -d '' f; do
+        -print0 2> /dev/null |
+        while IFS= read -r -d '' f; do
             rm -f "$f"
             log_info "  Removed: $f"
         done
@@ -194,10 +194,19 @@ check_nginx_migration() {
     fi
 
     case "$choice" in
-        1|yes)  migrate_from_nginx ;;
-        2|no)   log_info "Leaving nginx in place. Exiting."; exit 0 ;;
-        3|abort) log_error "Aborting."; exit 1 ;;
-        *)      log_error "Invalid choice '$choice'. Aborting."; exit 1 ;;
+        1 | yes) migrate_from_nginx ;;
+        2 | no)
+            log_info "Leaving nginx in place. Exiting."
+            exit 0
+            ;;
+        3 | abort)
+            log_error "Aborting."
+            exit 1
+            ;;
+        *)
+            log_error "Invalid choice '$choice'. Aborting."
+            exit 1
+            ;;
     esac
 }
 
@@ -216,7 +225,7 @@ write_dashboard_config() {
     local creds_file="$TRAEFIK_DIR/dashboard-credentials"
 
     # Write dynamic config with BasicAuth router for the dashboard
-    cat > "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" <<EOF
+    cat > "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" << EOF
 ---
 # Traefik Dashboard - BasicAuth Protected
 # Managed by dockerHosting - do not edit by hand
@@ -238,7 +247,7 @@ EOF
     chmod 640 "$TRAEFIK_DYNAMIC_DIR/dashboard.yml"
 
     # Store plaintext credentials for operator reference (root-only)
-    cat > "$creds_file" <<EOF
+    cat > "$creds_file" << EOF
 # Traefik Dashboard Credentials
 # Generated: $(date)
 # URL: http://<server-ip>:8080/dashboard/
@@ -250,8 +259,8 @@ EOF
 }
 
 prompt_firewall_8080() {
-    command -v ufw &>/dev/null || return 0
-    ufw status 2>/dev/null | grep -q "Status: active" || return 0
+    command -v ufw &> /dev/null || return 0
+    ufw status 2> /dev/null | grep -q "Status: active" || return 0
 
     echo ""
     log_warn "Traefik dashboard is bound to all interfaces on port 8080."
@@ -280,7 +289,7 @@ prompt_firewall_8080() {
             ufw allow 8080/tcp comment 'Traefik dashboard'
             log_warn "Firewall: port 8080 open to all — ensure dashboard credentials are strong!"
             ;;
-        3|*)
+        3 | *)
             log_info "Port 8080 remains blocked. SSH tunnel: ssh -L 8080:localhost:8080 user@server"
             ;;
     esac
@@ -302,7 +311,7 @@ write_configs() {
 start_traefik() {
     log_info "Pulling traefik:${TRAEFIK_VERSION}..."
     docker pull "traefik:${TRAEFIK_VERSION}"
-    docker rm -f traefik 2>/dev/null || true
+    docker rm -f traefik 2> /dev/null || true
 
     log_info "Starting Traefik container..."
     # --network host: required so that 127.0.0.1:PORT in site configs resolves
@@ -326,10 +335,10 @@ verify_traefik() {
     log_info "Waiting for Traefik API..."
     local retries=15
     while [[ $retries -gt 0 ]]; do
-        if curl -sf -u "admin:${DASHBOARD_PASSWORD}" http://127.0.0.1:8080/api/version >/dev/null 2>&1; then
+        if curl -sf -u "admin:${DASHBOARD_PASSWORD}" http://127.0.0.1:8080/api/version > /dev/null 2>&1; then
             local ver
-            ver=$(curl -sf -u "admin:${DASHBOARD_PASSWORD}" http://127.0.0.1:8080/api/version 2>/dev/null \
-                  | grep -oP '"Version":"\K[^"]+' || echo "unknown")
+            ver=$(curl -sf -u "admin:${DASHBOARD_PASSWORD}" http://127.0.0.1:8080/api/version 2> /dev/null |
+                grep -oP '"Version":"\K[^"]+' || echo "unknown")
             log_info "Traefik is running (version: $ver)"
             return 0
         fi
@@ -346,10 +355,10 @@ main() {
     fi
 
     local running_image
-    running_image=$(docker inspect traefik --format '{{.Config.Image}}' 2>/dev/null || true)
-    if [[ "$FORCE" == false ]] && \
-       [[ "$running_image" == "traefik:${TRAEFIK_VERSION}" ]] && \
-       docker inspect traefik --format '{{.State.Running}}' 2>/dev/null | grep -q "true"; then
+    running_image=$(docker inspect traefik --format '{{.Config.Image}}' 2> /dev/null || true)
+    if [[ "$FORCE" == false ]] &&
+        [[ "$running_image" == "traefik:${TRAEFIK_VERSION}" ]] &&
+        docker inspect traefik --format '{{.State.Running}}' 2> /dev/null | grep -q "true"; then
         log_info "Traefik ${TRAEFIK_VERSION} is already running — skipping (use --force to reinstall)"
         exit 0
     fi

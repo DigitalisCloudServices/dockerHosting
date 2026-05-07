@@ -41,7 +41,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # Source the .env file to read variables
-set -a  # automatically export all variables
+set -a # automatically export all variables
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 set +a

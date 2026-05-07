@@ -9,7 +9,7 @@
 # - Runs full setup from repository scripts
 #############################################
 
-set -e  # Exit on error
+set -e # Exit on error
 
 # Ensure sbin directories are in PATH (may be missing when invoked via sudo/curl|bash)
 export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -31,9 +31,9 @@ DOCKERHOSTING_REPO="https://github.com/DigitalisCloudServices/dockerHosting.git"
 DOCKERHOSTING_DIR="/opt/dockerHosting"
 
 # Log functions
-_ts()       { date -u +%Y-%m-%dT%H:%M:%SZ; }
-log_info()  { echo -e "${GREEN}[INFO]${NC}  [$(_ts)] $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC}  [$(_ts)] $1"; }
+_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+log_info() { echo -e "${GREEN}[INFO]${NC}  [$(_ts)] $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC}  [$(_ts)] $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} [$(_ts)] $1"; }
 
 # Check if running as root
@@ -116,7 +116,7 @@ setup_sudo_user() {
             log_warn "Username cannot be empty. Try again."
             continue
         fi
-        if ! id "$username" &>/dev/null; then
+        if ! id "$username" &> /dev/null; then
             log_warn "User '$username' does not exist. Try again."
             continue
         fi
@@ -131,8 +131,8 @@ setup_sudo_user() {
 # Log the current branch and commit hash of the repository
 log_repo_version() {
     local hash branch
-    hash=$(git -C "$DOCKERHOSTING_DIR" rev-parse --short HEAD 2>/dev/null)
-    branch=$(git -C "$DOCKERHOSTING_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)
+    hash=$(git -C "$DOCKERHOSTING_DIR" rev-parse --short HEAD 2> /dev/null)
+    branch=$(git -C "$DOCKERHOSTING_DIR" rev-parse --abbrev-ref HEAD 2> /dev/null)
     log_info "Repository version: ${branch} @ ${hash}"
 }
 
@@ -201,7 +201,7 @@ confirm_ssh_keys_before_hardening() {
     local sudo_users=()
     while IFS= read -r u; do
         sudo_users+=("$u")
-    done < <(getent group sudo 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -v '^$' || true)
+    done < <(getent group sudo 2> /dev/null | cut -d: -f4 | tr ',' '\n' | grep -v '^$' || true)
 
     if [ ${#sudo_users[@]} -eq 0 ]; then
         log_warn "No users found in the sudo group."
@@ -212,7 +212,7 @@ confirm_ssh_keys_before_hardening() {
             local home_dir
             home_dir=$(getent passwd "$u" | cut -d: -f6)
             local auth_keys="$home_dir/.ssh/authorized_keys"
-            if [ -f "$auth_keys" ] && grep -qE '^(ssh-|ecdsa-|sk-)' "$auth_keys" 2>/dev/null; then
+            if [ -f "$auth_keys" ] && grep -qE '^(ssh-|ecdsa-|sk-)' "$auth_keys" 2> /dev/null; then
                 local key_count
                 key_count=$(grep -cE '^(ssh-|ecdsa-|sk-)' "$auth_keys")
                 echo -e "  ${GREEN}✓${NC} $u — $key_count key(s) in $auth_keys"
@@ -249,8 +249,8 @@ run_full_setup() {
     local FORCE_STEPS=""
     for arg in "$@"; do
         case "$arg" in
-            --force)          FORCE_ALL=true ;;
-            --force=*)        FORCE_STEPS="${arg#*=}" ;;
+            --force) FORCE_ALL=true ;;
+            --force=*) FORCE_STEPS="${arg#*=}" ;;
         esac
     done
 
@@ -504,7 +504,7 @@ main() {
     echo "  ✓ Automated security updates (daily)"
     echo "  ✓ SSH hardening (key-only auth, rate limiting)"
     echo "  ✓ fail2ban protection (SSH brute-force prevention)"
-    if docker ps --filter "name=^traefik$" --filter "status=running" --format "{{.Names}}" 2>/dev/null | grep -q "^traefik$"; then
+    if docker ps --filter "name=^traefik$" --filter "status=running" --format "{{.Names}}" 2> /dev/null | grep -q "^traefik$"; then
         echo "  ✓ Traefik v3.6 reverse proxy (ports 80/443, dashboard on :8080 — BasicAuth protected)"
         if [ -f "/etc/traefik/dashboard-credentials" ]; then
             echo "    Dashboard credentials: /etc/traefik/dashboard-credentials"

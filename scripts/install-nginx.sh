@@ -44,7 +44,7 @@ if [ -f /etc/nginx/sites-available/default ]; then
 fi
 
 # Create optimized nginx.conf for boundary/routing
-cat > /etc/nginx/nginx.conf <<'EOF'
+cat > /etc/nginx/nginx.conf << 'EOF'
 user www-data;
 worker_processes auto;
 pid /run/nginx.pid;
@@ -156,7 +156,7 @@ EOF
 echo "[INFO] Created boundary nginx.conf"
 
 # Create a simple health check endpoint
-cat > /etc/nginx/sites-available/health-check <<'EOF'
+cat > /etc/nginx/sites-available/health-check << 'EOF'
 server {
     listen 80;
     server_name localhost;
@@ -196,7 +196,7 @@ else
 fi
 
 # Configure log rotation for Nginx
-cat > /etc/logrotate.d/nginx-boundary <<'EOF'
+cat > /etc/logrotate.d/nginx-boundary << 'EOF'
 /var/log/nginx/*.log {
     daily
     missingok

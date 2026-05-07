@@ -60,7 +60,7 @@ HELPERS_DIR="$DEPLOY_DIR/bin"
 mkdir -p "$HELPERS_DIR"
 
 # Helper: docker-up
-cat > "$HELPERS_DIR/docker-up" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/docker-up" << 'SCRIPT_EOF'
 #!/bin/bash
 set -e
 cd "$(dirname "$0")/.."
@@ -70,7 +70,7 @@ echo "[INFO] Services started successfully"
 SCRIPT_EOF
 
 # Helper: docker-down
-cat > "$HELPERS_DIR/docker-down" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/docker-down" << 'SCRIPT_EOF'
 #!/bin/bash
 set -e
 cd "$(dirname "$0")/.."
@@ -80,7 +80,7 @@ echo "[INFO] Services stopped successfully"
 SCRIPT_EOF
 
 # Helper: docker-restart
-cat > "$HELPERS_DIR/docker-restart" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/docker-restart" << 'SCRIPT_EOF'
 #!/bin/bash
 set -e
 cd "$(dirname "$0")/.."
@@ -90,21 +90,21 @@ echo "[INFO] Services restarted successfully"
 SCRIPT_EOF
 
 # Helper: docker-logs
-cat > "$HELPERS_DIR/docker-logs" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/docker-logs" << 'SCRIPT_EOF'
 #!/bin/bash
 cd "$(dirname "$0")/.."
 sudo docker compose logs "$@"
 SCRIPT_EOF
 
 # Helper: docker-ps
-cat > "$HELPERS_DIR/docker-ps" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/docker-ps" << 'SCRIPT_EOF'
 #!/bin/bash
 cd "$(dirname "$0")/.."
 sudo docker compose ps "$@"
 SCRIPT_EOF
 
 # Helper: docker-pull
-cat > "$HELPERS_DIR/docker-pull" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/docker-pull" << 'SCRIPT_EOF'
 #!/bin/bash
 set -e
 cd "$(dirname "$0")/.."
@@ -114,7 +114,7 @@ echo "[INFO] Images pulled successfully"
 SCRIPT_EOF
 
 # Helper: docker-exec
-cat > "$HELPERS_DIR/docker-exec" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/docker-exec" << 'SCRIPT_EOF'
 #!/bin/bash
 cd "$(dirname "$0")/.."
 if [ -z "$1" ]; then
@@ -126,7 +126,7 @@ sudo docker compose exec "$@"
 SCRIPT_EOF
 
 # Helper: traefik-status
-cat > "$HELPERS_DIR/traefik-status" <<'SCRIPT_EOF'
+cat > "$HELPERS_DIR/traefik-status" << 'SCRIPT_EOF'
 #!/bin/bash
 echo "[INFO] Traefik container status:"
 sudo docker ps --filter "name=^traefik$" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
@@ -148,7 +148,7 @@ chown -R "$SITE_USER:$SITE_USER" "$HELPERS_DIR"
 echo "[INFO] Created helper scripts in $HELPERS_DIR"
 
 # Create README for helper scripts
-cat > "$HELPERS_DIR/README.md" <<'README_EOF'
+cat > "$HELPERS_DIR/README.md" << 'README_EOF'
 # Docker Helper Scripts
 
 These scripts provide convenient access to Docker Compose operations

@@ -25,9 +25,11 @@ fi
 echo "[INFO] Hardening Docker daemon configuration..."
 
 FORCE=false
-for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+for arg in "$@"; do
+    [[ "$arg" == "--force" ]] && FORCE=true
+done
 
-if [[ "$FORCE" == false ]] && [[ -f /etc/docker/daemon.json ]] && grep -q '"icc": false' /etc/docker/daemon.json 2>/dev/null; then
+if [[ "$FORCE" == false ]] && [[ -f /etc/docker/daemon.json ]] && grep -q '"icc": false' /etc/docker/daemon.json 2> /dev/null; then
     echo "[INFO] Docker daemon already hardened — skipping (use --force to reconfigure)"
     exit 0
 fi
@@ -55,7 +57,7 @@ fi
 
 # Create comprehensive hardened daemon.json
 if [ "$ENABLE_USERNS_REMAP" = true ]; then
-    cat > /etc/docker/daemon.json <<'EOF'
+    cat > /etc/docker/daemon.json << 'EOF'
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -87,7 +89,7 @@ if [ "$ENABLE_USERNS_REMAP" = true ]; then
 }
 EOF
 else
-    cat > /etc/docker/daemon.json <<'EOF'
+    cat > /etc/docker/daemon.json << 'EOF'
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -127,19 +129,19 @@ if [ "$ENABLE_USERNS_REMAP" = true ]; then
     echo "[INFO] Setting up user namespace remapping..."
 
     # Check if dockremap entry already exists in /etc/subuid
-    if ! grep -q "^dockremap:" /etc/subuid 2>/dev/null; then
+    if ! grep -q "^dockremap:" /etc/subuid 2> /dev/null; then
         echo "dockremap:100000:65536" >> /etc/subuid
         echo "[INFO] Added dockremap to /etc/subuid"
     fi
 
     # Check if dockremap entry already exists in /etc/subgid
-    if ! grep -q "^dockremap:" /etc/subgid 2>/dev/null; then
+    if ! grep -q "^dockremap:" /etc/subgid 2> /dev/null; then
         echo "dockremap:100000:65536" >> /etc/subgid
         echo "[INFO] Added dockremap to /etc/subgid"
     fi
 
     # Create dockremap user if it doesn't exist
-    if ! id dockremap &>/dev/null; then
+    if ! id dockremap &> /dev/null; then
         useradd -r -s /usr/sbin/nologin -d /nonexistent dockremap
         echo "[INFO] Created dockremap user"
     fi
@@ -153,7 +155,7 @@ if ! systemctl restart docker; then
     echo "[WARN] Hardened configuration failed, trying fallback..."
 
     # Fallback: Create minimal working configuration
-    cat > /etc/docker/daemon.json <<'EOF'
+    cat > /etc/docker/daemon.json << 'EOF'
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -203,7 +205,7 @@ echo "[INFO] Verifying Docker configuration..."
 docker info | grep -E "Storage Driver|Logging Driver" || true
 
 # Check if we're running hardened or minimal config
-if grep -q '"icc": false' /etc/docker/daemon.json 2>/dev/null; then
+if grep -q '"icc": false' /etc/docker/daemon.json 2> /dev/null; then
     HARDENED=true
 else
     HARDENED=false

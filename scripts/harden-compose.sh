@@ -33,9 +33,12 @@ FORCE=false
 for arg in "$@"; do
     case "$arg" in
         --read-only) READ_ONLY=true ;;
-        --force)     FORCE=true ;;
-        -*)          echo "[ERROR] Unknown option: $arg"; exit 1 ;;
-        *)           DEPLOY_DIR="$arg" ;;
+        --force) FORCE=true ;;
+        -*)
+            echo "[ERROR] Unknown option: $arg"
+            exit 1
+            ;;
+        *) DEPLOY_DIR="$arg" ;;
     esac
 done
 
@@ -68,8 +71,8 @@ fi
 extract_services() {
     local file="$1"
     # Match lines indented exactly 2 spaces under `services:` that look like service names
-    awk '/^services:/{found=1; next} found && /^  [a-zA-Z]/{print $1} found && /^[^ ]/{found=0}' "$file" \
-        | tr -d ':'
+    awk '/^services:/{found=1; next} found && /^  [a-zA-Z]/{print $1} found && /^[^ ]/{found=0}' "$file" |
+        tr -d ':'
 }
 
 SERVICES=()

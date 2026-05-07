@@ -24,15 +24,17 @@ GRUB_DEFAULT=/etc/default/grub
 echo "[INFO] Hardening GRUB bootloader..."
 
 FORCE=false
-for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+for arg in "$@"; do
+    [[ "$arg" == "--force" ]] && FORCE=true
+done
 
-if [[ "$FORCE" == false ]] && grep -q "set superusers" "$GRUB_CONF" 2>/dev/null; then
+if [[ "$FORCE" == false ]] && grep -q "set superusers" "$GRUB_CONF" 2> /dev/null; then
     echo "[INFO] GRUB superuser already configured — skipping (use --force to reconfigure)"
     exit 0
 fi
 
 # Verify GRUB is installed
-if ! command -v grub-mkconfig &>/dev/null && ! command -v grub2-mkconfig &>/dev/null; then
+if ! command -v grub-mkconfig &> /dev/null && ! command -v grub2-mkconfig &> /dev/null; then
     echo "[WARN] grub-mkconfig not found — GRUB may not be the bootloader on this system"
     echo "[WARN] Skipping bootloader hardening"
     exit 0
@@ -62,8 +64,10 @@ fi
 echo "[INFO] Enter the GRUB superuser password (shown as asterisks):"
 GRUB_PASS=""
 while [[ -z "$GRUB_PASS" ]]; do
-    read -rsp "Password: " GRUB_PASS; echo
-    read -rsp "Confirm:  " GRUB_PASS2; echo
+    read -rsp "Password: " GRUB_PASS
+    echo
+    read -rsp "Confirm:  " GRUB_PASS2
+    echo
     if [[ "$GRUB_PASS" != "$GRUB_PASS2" ]]; then
         echo "[WARN] Passwords do not match — try again"
         GRUB_PASS=""
@@ -75,8 +79,8 @@ done
 
 # Hash the password using grub-mkpasswd-pbkdf2
 echo "[INFO] Generating PBKDF2 password hash..."
-GRUB_HASH=$(echo -e "${GRUB_PASS}\n${GRUB_PASS}" | grub-mkpasswd-pbkdf2 2>/dev/null \
-    | grep "grub.pbkdf2" | awk '{print $NF}')
+GRUB_HASH=$(echo -e "${GRUB_PASS}\n${GRUB_PASS}" | grub-mkpasswd-pbkdf2 2> /dev/null |
+    grep "grub.pbkdf2" | awk '{print $NF}')
 
 if [[ -z "$GRUB_HASH" ]]; then
     echo "[ERROR] Failed to generate GRUB password hash"
@@ -84,10 +88,10 @@ if [[ -z "$GRUB_HASH" ]]; then
 fi
 
 # Backup 40_custom
-cp "$GRUB_CONF" "${GRUB_CONF}.backup.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+cp "$GRUB_CONF" "${GRUB_CONF}.backup.$(date +%Y%m%d-%H%M%S)" 2> /dev/null || true
 
 # Append superuser block to 40_custom (idempotent via guard above)
-cat >> "$GRUB_CONF" <<EOF
+cat >> "$GRUB_CONF" << EOF
 
 # GRUB Superuser — added by dockerHosting security hardening
 # Prevents single-user/rescue mode bypass (CIS 1.4.1)
@@ -99,7 +103,7 @@ echo "[INFO] Added GRUB superuser block to $GRUB_CONF"
 
 # Mark the default menu entry as unrestricted so it boots without prompting
 # (--unrestricted is added to the generated entry in /etc/grub.d/10_linux)
-if ! grep -q "GRUB_DISABLE_SUBMENU" "$GRUB_DEFAULT" 2>/dev/null; then
+if ! grep -q "GRUB_DISABLE_SUBMENU" "$GRUB_DEFAULT" 2> /dev/null; then
     echo 'GRUB_DISABLE_SUBMENU=y' >> "$GRUB_DEFAULT"
 fi
 
@@ -107,15 +111,15 @@ fi
 LINUX_SCRIPT=/etc/grub.d/10_linux
 if [[ -f "$LINUX_SCRIPT" ]] && ! grep -q "\-\-unrestricted" "$LINUX_SCRIPT"; then
     # Insert --unrestricted into the menuentry class so normal boot is passwordless
-    sed -i 's/menuentry \(.*\) {$/menuentry \1 --unrestricted {/' "$LINUX_SCRIPT" 2>/dev/null || \
-    echo "[WARN] Could not auto-patch 10_linux — normal boot entries may prompt for password"
+    sed -i 's/menuentry \(.*\) {$/menuentry \1 --unrestricted {/' "$LINUX_SCRIPT" 2> /dev/null ||
+        echo "[WARN] Could not auto-patch 10_linux — normal boot entries may prompt for password"
 fi
 
 # Regenerate GRUB config
 echo "[INFO] Regenerating GRUB configuration..."
-if command -v grub-mkconfig &>/dev/null; then
+if command -v grub-mkconfig &> /dev/null; then
     grub-mkconfig -o /boot/grub/grub.cfg
-elif command -v grub2-mkconfig &>/dev/null; then
+elif command -v grub2-mkconfig &> /dev/null; then
     grub2-mkconfig -o /boot/grub2/grub.cfg
 fi
 

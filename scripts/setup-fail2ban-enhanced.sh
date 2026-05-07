@@ -19,7 +19,9 @@ set -e
 echo "[INFO] Setting up enhanced fail2ban configuration..."
 
 FORCE=false
-for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+for arg in "$@"; do
+    [[ "$arg" == "--force" ]] && FORCE=true
+done
 
 if [[ "$FORCE" == false ]] && [[ -f /etc/fail2ban/jail.d/sshd-enhanced.conf ]]; then
     echo "[INFO] Enhanced fail2ban already configured — skipping (use --force to reconfigure)"
@@ -40,7 +42,7 @@ rm -f /etc/fail2ban/jail.d/nginx-enhanced.conf
 echo "[INFO] Configured fail2ban jails (SSH only — Traefik logs to stdout, not a file)"
 
 # Update SSH jail with stricter settings (already exists, enhance it)
-cat > /etc/fail2ban/jail.d/sshd-enhanced.conf <<'EOF'
+cat > /etc/fail2ban/jail.d/sshd-enhanced.conf << 'EOF'
 [sshd]
 enabled = true
 port = ssh

@@ -32,21 +32,48 @@ DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bundle)  BUNDLE_PATH="$2"; shift 2 ;;
-        --out)     OUTPUT_DIR="$2";  shift 2 ;;
-        --out-tar) OUT_TAR="$2";     shift 2 ;;
-        --dry-run) DRY_RUN=true;     shift   ;;
-        *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
+        --bundle)
+            BUNDLE_PATH="$2"
+            shift 2
+            ;;
+        --out)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --out-tar)
+            OUT_TAR="$2"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        *)
+            echo "ERROR: unknown argument: $1" >&2
+            exit 2
+            ;;
     esac
 done
 
-[[ -z "${BUNDLE_PATH}" ]] && { echo "ERROR: --bundle is required" >&2; exit 2; }
-[[ "${DRY_RUN}" != "true" && -z "${OUTPUT_DIR}" && -z "${OUT_TAR}" ]] && \
-    { echo "ERROR: --out or --out-tar required unless --dry-run" >&2; exit 2; }
-[[ -n "${OUTPUT_DIR}" && -n "${OUT_TAR}" ]] && \
-    { echo "ERROR: --out and --out-tar are mutually exclusive" >&2; exit 2; }
-[[ ! -f "${BUNDLE_PATH}" ]] && \
-    { echo "ERROR: bundle not found: ${BUNDLE_PATH}" >&2; exit 2; }
+[[ -z "${BUNDLE_PATH}" ]] && {
+    echo "ERROR: --bundle is required" >&2
+    exit 2
+}
+[[ "${DRY_RUN}" != "true" && -z "${OUTPUT_DIR}" && -z "${OUT_TAR}" ]] &&
+    {
+        echo "ERROR: --out or --out-tar required unless --dry-run" >&2
+        exit 2
+    }
+[[ -n "${OUTPUT_DIR}" && -n "${OUT_TAR}" ]] &&
+    {
+        echo "ERROR: --out and --out-tar are mutually exclusive" >&2
+        exit 2
+    }
+[[ ! -f "${BUNDLE_PATH}" ]] &&
+    {
+        echo "ERROR: bundle not found: ${BUNDLE_PATH}" >&2
+        exit 2
+    }
 
 SKIP_ENCRYPTION="${SKIP_ENCRYPTION:-true}"
 SKIP_SIGNATURE="${SKIP_SIGNATURE:-true}"
@@ -57,9 +84,9 @@ SKIP_SIGNATURE="${SKIP_SIGNATURE:-true}"
 if [[ "${SKIP_ENCRYPTION}" == "true" && "${SKIP_SIGNATURE}" == "true" ]]; then
     echo "==> Staging ${BUNDLE_PATH} (skip-encryption and skip-signature mode)"
 
-    GIT_HASH="$(tar xzf "${BUNDLE_PATH}" -O manifest.json 2>/dev/null \
-        | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('git_hash','unknown'))" \
-        2>/dev/null || echo 'unknown')"
+    GIT_HASH="$(tar xzf "${BUNDLE_PATH}" -O manifest.json 2> /dev/null |
+        python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('git_hash','unknown'))" \
+            2> /dev/null || echo 'unknown')"
 
     if [[ "${DRY_RUN}" == "true" ]]; then
         echo "==> Dry-run: bundle ok, git_hash=${GIT_HASH}"
@@ -80,16 +107,22 @@ fi
 # ── Crypto mode (signed and/or encrypted) ────────────────────────────────────
 
 if [[ "${SKIP_ENCRYPTION}" == "false" && -z "${ARTIFACT_AES_KEY:-}" ]]; then
-    [[ -f /run/secrets/artifact_aes_key ]] \
-        && ARTIFACT_AES_KEY="$(cat /run/secrets/artifact_aes_key)" \
-        || { [[ "${DRY_RUN}" == "true" ]] && ARTIFACT_AES_KEY="" \
-             || { echo "ERROR: ARTIFACT_AES_KEY required for encrypted artifacts" >&2; exit 2; }; }
+    [[ -f /run/secrets/artifact_aes_key ]] &&
+        ARTIFACT_AES_KEY="$(cat /run/secrets/artifact_aes_key)" ||
+        { [[ "${DRY_RUN}" == "true" ]] && ARTIFACT_AES_KEY="" ||
+            {
+                echo "ERROR: ARTIFACT_AES_KEY required for encrypted artifacts" >&2
+                exit 2
+            }; }
 fi
 
 if [[ "${SKIP_SIGNATURE}" == "false" && -z "${ARTIFACT_SIGNING_PUBLIC_KEY:-}" ]]; then
-    [[ -f /run/secrets/artifact_signing_public_key ]] \
-        && ARTIFACT_SIGNING_PUBLIC_KEY="$(cat /run/secrets/artifact_signing_public_key)" \
-        || { echo "ERROR: ARTIFACT_SIGNING_PUBLIC_KEY required for signed artifacts" >&2; exit 2; }
+    [[ -f /run/secrets/artifact_signing_public_key ]] &&
+        ARTIFACT_SIGNING_PUBLIC_KEY="$(cat /run/secrets/artifact_signing_public_key)" ||
+        {
+            echo "ERROR: ARTIFACT_SIGNING_PUBLIC_KEY required for signed artifacts" >&2
+            exit 2
+        }
 fi
 
 WORK_DIR="$(mktemp -d)"
@@ -106,7 +139,10 @@ PAYLOAD_ENC="${EXTRACT_DIR}/payload.enc"
 SIG_FILE="${EXTRACT_DIR}/signature.sig"
 
 for f in "${MANIFEST}" "${PAYLOAD_ENC}" "${SIG_FILE}"; do
-    [[ -f "$f" ]] || { echo "ERROR: bundle missing: $(basename "$f")" >&2; exit 1; }
+    [[ -f "$f" ]] || {
+        echo "ERROR: bundle missing: $(basename "$f")" >&2
+        exit 1
+    }
 done
 
 FORMAT_VERSION="$(python3 -c "
@@ -121,8 +157,11 @@ if [[ "${SKIP_SIGNATURE}" == "false" ]]; then
     printf '%s' "${ARTIFACT_SIGNING_PUBLIC_KEY}" > "${PUBLIC_KEY_FILE}"
 
     openssl dgst -sha256 -verify "${PUBLIC_KEY_FILE}" \
-        -signature "${SIG_FILE}" "${PAYLOAD_ENC}" > /dev/null 2>&1 \
-        || { echo "FATAL: RSA signature verification FAILED" >&2; exit 1; }
+        -signature "${SIG_FILE}" "${PAYLOAD_ENC}" > /dev/null 2>&1 ||
+        {
+            echo "FATAL: RSA signature verification FAILED" >&2
+            exit 1
+        }
     echo "  Signature OK."
 else
     echo "  Skipping signature verification (SKIP_SIGNATURE=true)"
@@ -131,8 +170,11 @@ fi
 echo "  Verifying SHA256 payload checksum..."
 EXPECTED_CHECKSUM="$(python3 -c "import json,sys; d=json.load(open('${MANIFEST}')); print(d['payload_checksum'])")"
 ACTUAL_CHECKSUM="$(sha256sum "${PAYLOAD_ENC}" | awk '{print $1}')"
-[[ "${ACTUAL_CHECKSUM}" == "${EXPECTED_CHECKSUM}" ]] \
-    || { echo "FATAL: checksum mismatch — expected ${EXPECTED_CHECKSUM}, got ${ACTUAL_CHECKSUM}" >&2; exit 1; }
+[[ "${ACTUAL_CHECKSUM}" == "${EXPECTED_CHECKSUM}" ]] ||
+    {
+        echo "FATAL: checksum mismatch — expected ${EXPECTED_CHECKSUM}, got ${ACTUAL_CHECKSUM}" >&2
+        exit 1
+    }
 echo "  Checksum OK."
 
 if [[ "${DRY_RUN}" == "true" ]]; then
@@ -148,16 +190,18 @@ if [[ "${SKIP_ENCRYPTION}" == "false" ]]; then
         echo "  Decrypting (v1: AES-256-CBC)..."
         AES_KEY_FILE="${WORK_DIR}/aes.key"
         echo "${ARTIFACT_AES_KEY}" | base64 -d > "${AES_KEY_FILE}"
-    chmod 600 "${AES_KEY_FILE}"
-    openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 \
-        -pass "file:${AES_KEY_FILE}" -in "${PAYLOAD_ENC}" -out "${DECRYPTED_TAR}" \
-        || { echo "FATAL: AES-256-CBC decryption failed" >&2; exit 3; }
+        chmod 600 "${AES_KEY_FILE}"
+        openssl enc -aes-256-cbc -d -pbkdf2 -iter 100000 \
+            -pass "file:${AES_KEY_FILE}" -in "${PAYLOAD_ENC}" -out "${DECRYPTED_TAR}" ||
+            {
+                echo "FATAL: AES-256-CBC decryption failed" >&2
+                exit 3
+            }
 
-elif [[ "${FORMAT_VERSION}" == "2" ]]; then
-    echo "  Decrypting (v2: AES-256-GCM)..."
-    ARTIFACT_AES_KEY="${ARTIFACT_AES_KEY}" \
-    python3 - "${PAYLOAD_ENC}" "${DECRYPTED_TAR}" <<'PYEOF' \
-        || { echo "FATAL: AES-256-GCM decryption failed" >&2; exit 3; }
+    elif [[ "${FORMAT_VERSION}" == "2" ]]; then
+        echo "  Decrypting (v2: AES-256-GCM)..."
+        ARTIFACT_AES_KEY="${ARTIFACT_AES_KEY}" \
+            python3 - "${PAYLOAD_ENC}" "${DECRYPTED_TAR}" << 'PYEOF' ||
 import sys, os, base64, hashlib
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.exceptions import InvalidTag
@@ -180,9 +224,14 @@ except InvalidTag:
 with open(sys.argv[2], 'wb') as f:
     f.write(plaintext)
 PYEOF
-else
-    echo "FATAL: unsupported format_version '${FORMAT_VERSION}'" >&2; exit 3
-fi
+            {
+                echo "FATAL: AES-256-GCM decryption failed" >&2
+                exit 3
+            }
+    else
+        echo "FATAL: unsupported format_version '${FORMAT_VERSION}'" >&2
+        exit 3
+    fi
 else
     echo "  Skipping decryption (SKIP_ENCRYPTION=true) — payload is unencrypted tar.gz"
     cp "${PAYLOAD_ENC}" "${DECRYPTED_TAR}"

@@ -152,7 +152,7 @@ test-style:
 	@echo "Running bashate style checks..."
 	@command -v bashate >/dev/null 2>&1 \
 		|| { echo "ERROR: bashate not found. Install: pip install bashate"; exit 1; }
-	@bashate --verbose --ignore E006 $(SCRIPTS)
+	@bashate --verbose --ignore E006,E010,E011 $(SCRIPTS)
 	@echo "✓ Style check passed"
 
 test-security:

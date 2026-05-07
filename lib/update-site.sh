@@ -52,12 +52,30 @@ while [[ $# -gt 0 ]]; do
             TRIGGER="${2:?--trigger requires a value: bootstrap|update}"
             shift 2
             ;;
-        --pull-only)              PULL_ONLY=true;           shift ;;
-        --skip-artifact-download) SKIP_DOWNLOAD=true;       shift ;;
-        --force)                  FORCE=true;               shift ;;
-        --dry-run)                DRY_RUN=true;             shift ;;
-        --always-run-hooks)       ALWAYS_RUN_HOOKS=true;    shift ;;
-        *) echo "ERROR: unknown option: $1" >&2; exit 1 ;;
+        --pull-only)
+            PULL_ONLY=true
+            shift
+            ;;
+        --skip-artifact-download)
+            SKIP_DOWNLOAD=true
+            shift
+            ;;
+        --force)
+            FORCE=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --always-run-hooks)
+            ALWAYS_RUN_HOOKS=true
+            shift
+            ;;
+        *)
+            echo "ERROR: unknown option: $1" >&2
+            exit 1
+            ;;
     esac
 done
 
@@ -70,10 +88,13 @@ GCS_KEY_FILE="${PROJECT_DIR}/infra/secrets/gcs_service_account.json"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_ts()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
-_log()  { echo "  [update] [$(_ts)] $*"; }
+_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+_log() { echo "  [update] [$(_ts)] $*"; }
 _warn() { echo "  [update] [$(_ts)] WARN: $*" >&2; }
-_fail() { echo "FATAL [update]: $*" >&2; exit 1; }
+_fail() {
+    echo "FATAL [update]: $*" >&2
+    exit 1
+}
 
 _START_TS=$(date +%s)
 
@@ -85,7 +106,7 @@ _dotenv_get() {
 
 _dotenv_set() {
     local key="$1" value="$2"
-    if grep -qE "^${key}=" "${DOTENV}" 2>/dev/null; then
+    if grep -qE "^${key}=" "${DOTENV}" 2> /dev/null; then
         sed -i "s|^${key}=.*|${key}=${value}|" "${DOTENV}"
     else
         echo "${key}=${value}" >> "${DOTENV}"
@@ -94,7 +115,7 @@ _dotenv_set() {
 
 # ── Validate environment ──────────────────────────────────────────────────────
 
-[[ -f "${DOTENV}" ]]     || _fail ".env not found at ${DOTENV}"
+[[ -f "${DOTENV}" ]] || _fail ".env not found at ${DOTENV}"
 [[ -f "${DECRYPT_SH}" ]] || _fail "decrypt.sh not found at ${DECRYPT_SH}"
 [[ -f "${GCS_KEY_FILE}" ]] || _fail "GCS service account key not found at ${GCS_KEY_FILE}"
 
@@ -121,7 +142,7 @@ HOOKS_SNAPSHOT="[]"
 if [[ -f "${HOOKS_FILE}" ]]; then
     HOOKS_SNAPSHOT="$(python3 -c \
         "import json; d=json.load(open('${HOOKS_FILE}')); print(json.dumps(d.get('hooks', [])))" \
-        2>/dev/null || echo "[]")"
+        2> /dev/null || echo "[]")"
 fi
 
 _run_hooks() {
@@ -132,7 +153,7 @@ import json, sys
 for h in json.load(sys.stdin):
     if h.get('trigger') == sys.argv[1] and h.get('phase') == sys.argv[2]:
         print(h['script'])
-" "${TRIGGER}" "${phase}" 2>/dev/null || true)"
+" "${TRIGGER}" "${phase}" 2> /dev/null || true)"
     [[ -z "${scripts}" ]] && return 0
     while IFS= read -r s; do
         [[ -z "${s}" ]] && continue
@@ -159,8 +180,8 @@ ARTIFACT_TARGET_DIRS=()
 if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
     _log "Fetching channel metadata from GCS..."
 
-    GCS_TOKEN="$(_gcs_access_token "${GCS_KEY_FILE}")" \
-        || _fail "Failed to obtain GCS access token — check service account key at ${GCS_KEY_FILE}"
+    GCS_TOKEN="$(_gcs_access_token "${GCS_KEY_FILE}")" ||
+        _fail "Failed to obtain GCS access token — check service account key at ${GCS_KEY_FILE}"
 
     CHANNEL_META="$(curl -fsSL \
         -H "Authorization: Bearer ${GCS_TOKEN}" \
@@ -171,9 +192,10 @@ if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
     CHANNEL_INFRA_SIGNED="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra'].get('signed', True))" | tr '[:upper:]' '[:lower:]')"
     CHANNEL_INFRA_ENCRYPTED="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; print(json.load(sys.stdin)['infra'].get('encrypted', True))" | tr '[:upper:]' '[:lower:]')"
     CHANNEL_INFRA_STORAGE="$(echo "${CHANNEL_META}" | python3 -c "import json,sys; d=json.load(sys.stdin)['infra']; print(json.dumps({k:v for k,v in d.items() if k in ('type','bucket','path','directory','url')}))")"
-    
+
     # Extract filename from storage config
-    CHANNEL_INFRA_ARTIFACT="$(python3 - "${CHANNEL_INFRA_STORAGE}" <<'PYEOF'
+    CHANNEL_INFRA_ARTIFACT="$(
+        python3 - "${CHANNEL_INFRA_STORAGE}" << 'PYEOF'
 import json, sys, os
 storage = json.loads(sys.argv[1])
 storage_type = storage.get('type', 'gcs')
@@ -188,19 +210,20 @@ elif storage_type == 'gcs':
 elif storage_type in ('http', 'https'):
     print(os.path.basename(storage['url']))
 PYEOF
-)"
+    )"
 
     # Parse artifacts array
-    readarray -t ARTIFACT_NAMES  < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a['name']) for a in json.load(sys.stdin).get('artifacts',[])]")
+    readarray -t ARTIFACT_NAMES < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a['name']) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_HASHES < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a['git_hash']) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_SIGNED < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(str(a.get('signed', True)).lower()) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_ENCRYPTED < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(str(a.get('encrypted', True)).lower()) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_STORAGE_CONFIGS < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(json.dumps({k:v for k,v in a.items() if k in ('type','bucket','path','directory','url')})) for a in json.load(sys.stdin).get('artifacts',[])]")
     readarray -t ARTIFACT_TARGET_DIRS < <(echo "${CHANNEL_META}" | python3 -c "import json,sys; [print(a.get('target_dir', '')) for a in json.load(sys.stdin).get('artifacts',[])]")
-    
+
     # Extract filenames from storage configs
     for _storage in "${ARTIFACT_STORAGE_CONFIGS[@]}"; do
-        _filename="$(python3 - "${_storage}" <<'PYEOF'
+        _filename="$(
+            python3 - "${_storage}" << 'PYEOF'
 import json, sys, os
 storage = json.loads(sys.argv[1])
 storage_type = storage.get('type', 'gcs')
@@ -215,12 +238,12 @@ elif storage_type == 'gcs':
 elif storage_type in ('http', 'https'):
     print(os.path.basename(storage['url']))
 PYEOF
-)"
+        )"
         ARTIFACT_FILES+=("${_filename}")
     done
 
-    [[ -n "${CHANNEL_INFRA_ARTIFACT}" ]] \
-        || _fail "channel metadata is missing infra — trigger a new CI build and re-run."
+    [[ -n "${CHANNEL_INFRA_ARTIFACT}" ]] ||
+        _fail "channel metadata is missing infra — trigger a new CI build and re-run."
 
     _log "Channel: infra=${CHANNEL_INFRA_HASH:0:12} (signed=${CHANNEL_INFRA_SIGNED}, encrypted=${CHANNEL_INFRA_ENCRYPTED})  artifacts=(${ARTIFACT_NAMES[*]:-none})"
 else
@@ -273,7 +296,7 @@ done
 
 # Auto-detect fresh bootstrap: if no containers exist, force hooks to run
 if [[ "${_any_stale}" == "false" && "${TRIGGER}" == "bootstrap" ]]; then
-    if ! docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --services 2>/dev/null | grep -q .; then
+    if ! docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --services 2> /dev/null | grep -q .; then
         _log "Fresh deployment detected (no containers exist) — forcing bootstrap hooks"
         ALWAYS_RUN_HOOKS=true
     fi
@@ -307,53 +330,57 @@ mkdir -p "${ARTIFACT_CACHE}"
 
 _download_artifact() {
     local type="$1" storage_json="$2" signed="$3" encrypted="$4"
-    
+
     # Check if this is a local directory
     local is_local
-    is_local="$(python3 - "${storage_json}" <<'PYEOF'
+    is_local="$(
+        python3 - "${storage_json}" << 'PYEOF'
 import json, sys
 storage = json.loads(sys.argv[1])
 print("true" if storage.get('type') == 'local' and 'directory' in storage else "false")
 PYEOF
-)"
-    
+    )"
+
     if [[ "${is_local}" == "true" ]]; then
         # Local directory mode - create symlink in cache
         local local_dir
-        local_dir="$(python3 - "${storage_json}" <<'PYEOF'
+        local_dir="$(
+            python3 - "${storage_json}" << 'PYEOF'
 import json, sys
 storage = json.loads(sys.argv[1])
 print(storage['directory'])
 PYEOF
-)"
-        
+        )"
+
         local artifact_basename
-        artifact_basename="$(python3 - "${storage_json}" <<'PYEOF'
+        artifact_basename="$(
+            python3 - "${storage_json}" << 'PYEOF'
 import json, sys, os
 storage = json.loads(sys.argv[1])
 print(os.path.basename(storage['directory'].rstrip('/')))
 PYEOF
-)"
-        
+        )"
+
         local symlink="${ARTIFACT_CACHE}/${type}"
-        
+
         _log "${type}: using local directory ${local_dir}"
-        
+
         if [[ ! -d "${local_dir}" ]]; then
             _fail "${type}: local directory does not exist: ${local_dir}"
         fi
-        
+
         # Create or update symlink
         rm -f "${symlink}"
         ln -sf "${local_dir}" "${symlink}"
-        
+
         _log "${type}: symlinked ${symlink} -> ${local_dir}"
         return 0
     fi
-    
+
     # Construct download URL from storage config
     local download_url
-    download_url="$(python3 - "${storage_json}" <<'PYEOF'
+    download_url="$(
+        python3 - "${storage_json}" << 'PYEOF'
 import json, sys
 storage = json.loads(sys.argv[1])
 storage_type = storage.get('type', 'gcs')
@@ -370,11 +397,12 @@ elif storage_type in ('http', 'https'):
 else:
     sys.exit(f"Unsupported storage type: {storage_type}")
 PYEOF
-)"
-    
+    )"
+
     # Extract filename from storage config
     local artifact_basename
-    artifact_basename="$(python3 - "${storage_json}" <<'PYEOF'
+    artifact_basename="$(
+        python3 - "${storage_json}" << 'PYEOF'
 import json, sys, os
 storage = json.loads(sys.argv[1])
 storage_type = storage.get('type', 'gcs')
@@ -387,8 +415,8 @@ if storage_type == 'gcs':
 elif storage_type in ('http', 'https'):
     print(os.path.basename(storage['url']))
 PYEOF
-)"
-    
+    )"
+
     local dest="${ARTIFACT_CACHE}/${artifact_basename}"
     local stable="${ARTIFACT_CACHE}/${type}.tar.gz"
 
@@ -406,7 +434,7 @@ PYEOF
     else
         _log "${type}: downloading ${artifact_basename}..."
         local download_tmp="${dest}.download"
-        
+
         curl -fsSL --retry 3 --retry-delay 5 \
             -H "Authorization: Bearer ${GCS_TOKEN}" \
             -o "${download_tmp}" \
@@ -415,14 +443,14 @@ PYEOF
         _log "${type}: verifying and decrypting ${artifact_basename}..."
         local pub_key_file="${PROJECT_DIR}/infra/secrets/artifact_signing_public_key.pem"
         local aes_key_file="${PROJECT_DIR}/infra/secrets/artifact_aes_key.txt"
-        
+
         if [[ "${encrypted}" == "true" && "${signed}" == "true" ]]; then
             if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
                 ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
                 ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
                 SKIP_ENCRYPTION=false \
                 SKIP_SIGNATURE=false \
-                bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
+                    bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
             else
                 _fail "${type}: artifact requires encryption and signing but keys not found"
             fi
@@ -431,7 +459,7 @@ PYEOF
                 ARTIFACT_AES_KEY="$(cat "${aes_key_file}")" \
                 SKIP_ENCRYPTION=false \
                 SKIP_SIGNATURE=true \
-                bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
+                    bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
             else
                 _fail "${type}: artifact requires encryption but AES key not found"
             fi
@@ -440,7 +468,7 @@ PYEOF
                 ARTIFACT_SIGNING_PUBLIC_KEY="$(cat "${pub_key_file}")" \
                 SKIP_ENCRYPTION=true \
                 SKIP_SIGNATURE=false \
-                bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
+                    bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
             else
                 _fail "${type}: artifact requires signing but public key not found"
             fi
@@ -448,13 +476,13 @@ PYEOF
             SKIP_ENCRYPTION=true SKIP_SIGNATURE=true \
                 bash "${DECRYPT_SH}" --bundle "${download_tmp}" --out-tar "${dest}"
         fi
-        
+
         rm -f "${download_tmp}"
         chmod 444 "${dest}"
 
         # Prune old cached versions (keep 3 per type)
-        ls -1t "${ARTIFACT_CACHE}/${type}"-*.tar.gz 2>/dev/null \
-            | tail -n +4 | xargs rm -f 2>/dev/null || true
+        ls -1t "${ARTIFACT_CACHE}/${type}"-*.tar.gz 2> /dev/null |
+            tail -n +4 | xargs rm -f 2> /dev/null || true
     fi
 
     # Docker may have created a directory at the stable path too (same race condition).
@@ -488,8 +516,8 @@ _write_to_artifact_volume() {
     docker run --rm \
         -v "${vol}:/dst" \
         -v "${stable}:/src:ro" \
-        alpine sh -c 'cp /src /dst/artifact.tar.gz && chmod 444 /dst/artifact.tar.gz' \
-        || _fail "${type}: failed to write artifact to volume ${vol}"
+        alpine sh -c 'cp /src /dst/artifact.tar.gz && chmod 444 /dst/artifact.tar.gz' ||
+        _fail "${type}: failed to write artifact to volume ${vol}"
     _log "${type}: volume ${vol} updated"
 }
 
@@ -497,19 +525,19 @@ _extract_to_directory() {
     local type="$1"
     local target_dir="$2"
     local stable="${ARTIFACT_CACHE}/${type}.tar.gz"
-    
+
     # Strip leading/trailing slashes and ensure relative path
     target_dir="${target_dir#/}"
     target_dir="${target_dir%/}"
-    
+
     local extract_path="${PROJECT_DIR}/${target_dir}"
-    
+
     if [[ -d "${stable}" ]]; then
         _warn "${type}: removing directory at stable path (Docker created it): ${stable}"
         rm -rf "${stable}"
     fi
     [[ -f "${stable}" ]] || _fail "${type}: stable artifact not found at ${stable}"
-    
+
     _log "${type}: extracting to ${extract_path}..."
     mkdir -p "${extract_path}"
     tar -xzf "${stable}" -C "${extract_path}"
@@ -521,7 +549,7 @@ if [[ "${SKIP_DOWNLOAD}" != "true" ]]; then
     for _i in "${!ARTIFACT_NAMES[@]}"; do
         if [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]]; then
             _download_artifact "${ARTIFACT_NAMES[$_i]}" "${ARTIFACT_STORAGE_CONFIGS[$_i]}" "${ARTIFACT_SIGNED[$_i]}" "${ARTIFACT_ENCRYPTED[$_i]}"
-            
+
             # Extract to directory if target_dir is specified, otherwise write to volume
             if [[ -n "${ARTIFACT_TARGET_DIRS[$_i]:-}" ]]; then
                 _extract_to_directory "${ARTIFACT_NAMES[$_i]}" "${ARTIFACT_TARGET_DIRS[$_i]}"
@@ -547,28 +575,34 @@ fi
 if [[ "${INFRA_STALE}" == "true" ]]; then
     _log "Extracting infra artifact to ${PROJECT_DIR}..."
     tar -xzf "${ARTIFACT_CACHE}/${CHANNEL_INFRA_ARTIFACT}" -C "${PROJECT_DIR}"
-    _dotenv_set INFRA_HASH      "${CHANNEL_INFRA_HASH}"
-    _dotenv_set INFRA_SIGNED    "${CHANNEL_INFRA_SIGNED}"
+    _dotenv_set INFRA_HASH "${CHANNEL_INFRA_HASH}"
+    _dotenv_set INFRA_SIGNED "${CHANNEL_INFRA_SIGNED}"
     _dotenv_set INFRA_ENCRYPTED "${CHANNEL_INFRA_ENCRYPTED}"
-    _dotenv_set INFRA_ARTIFACT  "./artifact-cache/${CHANNEL_INFRA_ARTIFACT}"
+    _dotenv_set INFRA_ARTIFACT "./artifact-cache/${CHANNEL_INFRA_ARTIFACT}"
 fi
 
 # ── Update .env ───────────────────────────────────────────────────────────────
 
 for _i in "${!ARTIFACT_NAMES[@]}"; do
     if [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]]; then
-        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_GIT_HASH"   "${ARTIFACT_HASHES[$_i]}"
-        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_SIGNED"     "${ARTIFACT_SIGNED[$_i]}"
-        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_ENCRYPTED"  "${ARTIFACT_ENCRYPTED[$_i]}"
+        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_GIT_HASH" "${ARTIFACT_HASHES[$_i]}"
+        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_SIGNED" "${ARTIFACT_SIGNED[$_i]}"
+        _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_ENCRYPTED" "${ARTIFACT_ENCRYPTED[$_i]}"
         _dotenv_set "${ARTIFACT_NAMES[$_i]^^}_TARGET_DIR" "${ARTIFACT_TARGET_DIRS[$_i]:-}"
     fi
 done
 
 # Persist artifact names so --skip-artifact-download works offline
-_names_csv="$(IFS=','; echo "${ARTIFACT_NAMES[*]}")"
+_names_csv="$(
+    IFS=','
+    echo "${ARTIFACT_NAMES[*]}"
+)"
 [[ -n "${_names_csv}" ]] && _dotenv_set ARTIFACT_NAMES "${_names_csv}"
 
-[[ "${PULL_ONLY}" == "true" ]] && { _log "Pull-only mode — skipping container restart."; exit 0; }
+[[ "${PULL_ONLY}" == "true" ]] && {
+    _log "Pull-only mode — skipping container restart."
+    exit 0
+}
 
 # ── Restart stale services ────────────────────────────────────────────────────
 
@@ -579,8 +613,8 @@ _log "Authenticating Docker to Artifact Registry..."
 AR_REGISTRY="$(_dotenv_get AR_REGISTRY)"
 AR_REGISTRY="${AR_REGISTRY:-europe-docker.pkg.dev}"
 if cat "${GCS_KEY_FILE}" | docker login "${AR_REGISTRY}" \
-        --username _json_key \
-        --password-stdin > /dev/null 2>&1; then
+    --username _json_key \
+    --password-stdin > /dev/null 2>&1; then
     _log "Docker registry auth OK (${AR_REGISTRY})"
 else
     _warn "Docker registry auth failed — images may be stale"
@@ -593,8 +627,8 @@ docker compose -f "${PROJECT_DIR}/docker-compose.yml" pull --quiet --ignore-pull
 # Requires Docker Compose v2.15+ for --format json.
 _services_for_artifact() {
     local artifact_name="$1"
-    docker compose -f "${PROJECT_DIR}/docker-compose.yml" config --format json 2>/dev/null \
-        | python3 -c "
+    docker compose -f "${PROJECT_DIR}/docker-compose.yml" config --format json 2> /dev/null |
+        python3 -c "
 import json, sys
 config = json.load(sys.stdin)
 name = sys.argv[1]
@@ -604,7 +638,7 @@ for svc, cfg in config.get('services', {}).items():
         labels = dict(l.split('=', 1) for l in labels if '=' in l)
     if labels.get('artifact') == name:
         print(svc)
-" "${artifact_name}" 2>/dev/null || true
+" "${artifact_name}" 2> /dev/null || true
 }
 
 if [[ "${INFRA_STALE}" == "true" ]]; then
@@ -630,16 +664,17 @@ fi
 # Run post-start lifecycle hooks
 _run_hooks "post-start"
 
-_log "Update complete in $(( $(date +%s) - _START_TS ))s."
+_log "Update complete in $(($(date +%s) - _START_TS))s."
 docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps
 
-_unhealthy=$(docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --format json 2>/dev/null \
-    | python3 -c "
+_unhealthy=$(docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --format json 2> /dev/null |
+    python3 -c "
 import json, sys
 bad = []
 for line in sys.stdin:
     line = line.strip()
-    if not line: continue
+    if not line:
+        continue
     try:
         s = json.loads(line)
         state  = s.get('State', '')
@@ -649,5 +684,5 @@ for line in sys.stdin:
             bad.append(f'{name}({state}/{health})')
     except: pass
 print(' '.join(bad))
-" 2>/dev/null || true)
+" 2> /dev/null || true)
 [[ -n "${_unhealthy}" ]] && _warn "Unhealthy/exited services: ${_unhealthy}"

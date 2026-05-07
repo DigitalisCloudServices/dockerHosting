@@ -10,9 +10,11 @@ set -e
 echo "[INFO] Configuring UFW firewall..."
 
 FORCE=false
-for arg in "$@"; do [[ "$arg" == "--force" ]] && FORCE=true; done
+for arg in "$@"; do
+    [[ "$arg" == "--force" ]] && FORCE=true
+done
 
-if [[ "$FORCE" == false ]] && command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+if [[ "$FORCE" == false ]] && command -v ufw &> /dev/null && ufw status 2> /dev/null | grep -q "Status: active"; then
     echo "[INFO] Firewall already configured and active — skipping (use --force to reconfigure)"
     ufw status verbose
     exit 0
@@ -33,8 +35,8 @@ ufw default deny outgoing
 ufw default deny forward
 
 # --- INBOUND ---
-ufw allow in 22/tcp  comment 'SSH'
-ufw allow in 80/tcp  comment 'HTTP'
+ufw allow in 22/tcp comment 'SSH'
+ufw allow in 80/tcp comment 'HTTP'
 ufw allow in 443/tcp comment 'HTTPS'
 
 # Allow traffic from Docker bridge networks (container → host)
@@ -43,12 +45,12 @@ ufw allow in from 192.168.0.0/16
 
 # --- OUTBOUND ---
 # DNS (standard — UDP + TCP for large responses/zone transfers)
-ufw allow out 53/udp  comment 'DNS'
-ufw allow out 53/tcp  comment 'DNS (TCP)'
+ufw allow out 53/udp comment 'DNS'
+ufw allow out 53/tcp comment 'DNS (TCP)'
 # DNS over TLS (encrypted DNS — e.g. systemd-resolved stub, Unbound)
 ufw allow out 853/tcp comment 'DNS over TLS'
 # HTTP/HTTPS (apt updates, Docker pulls, Let's Encrypt, DNS over HTTPS via 443)
-ufw allow out 80/tcp  comment 'HTTP out'
+ufw allow out 80/tcp comment 'HTTP out'
 ufw allow out 443/tcp comment 'HTTPS out'
 # NTP (chrony)
 ufw allow out 123/udp comment 'NTP'

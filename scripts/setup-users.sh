@@ -20,7 +20,7 @@ fi
 echo "[INFO] Setting up user and permissions for $SITE_NAME..."
 
 # Create user if it doesn't exist
-if id "$SITE_NAME" &>/dev/null; then
+if id "$SITE_NAME" &> /dev/null; then
     echo "[INFO] User $SITE_NAME already exists"
 else
     # System user: nologin shell, no home dir created (deploy dir set as home
