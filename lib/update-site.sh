@@ -609,6 +609,30 @@ _names_csv="$(
 # Run pre-start lifecycle hooks (snapshotted before potential infra extraction above)
 _run_hooks "pre-start"
 
+# ── Kong TLS volume safety check ──────────────────────────────────────────────
+# Fallback for older infra artifacts where generate-secrets.sh doesn't create
+# the Kong TLS volume. This ensures the volume exists before docker compose up.
+if ! docker volume inspect kse_ssl_certs > /dev/null 2>&1; then
+    _log "Kong TLS volume not found — creating with self-signed certs (fallback)"
+
+    _tmp_certs=$(mktemp -d)
+    openssl req -x509 -newkey rsa:4096 \
+        -keyout "${_tmp_certs}/privkey.pem" \
+        -out "${_tmp_certs}/fullchain.pem" \
+        -days 365 -nodes \
+        -subj "/CN=localhost/O=KSE-Portal" > /dev/null 2>&1
+
+    docker volume create kse_ssl_certs > /dev/null
+    docker run --rm \
+        -v kse_ssl_certs:/certs \
+        -v "${_tmp_certs}:/src:ro" \
+        alpine:latest \
+        sh -c "cp /src/privkey.pem /certs/ && cp /src/fullchain.pem /certs/" > /dev/null
+
+    rm -rf "${_tmp_certs}"
+    _log "Kong TLS volume created with self-signed certs"
+fi
+
 _log "Authenticating Docker to Artifact Registry..."
 AR_REGISTRY="$(_dotenv_get AR_REGISTRY)"
 AR_REGISTRY="${AR_REGISTRY:-europe-docker.pkg.dev}"
