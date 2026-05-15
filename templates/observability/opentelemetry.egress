@@ -1,0 +1,14 @@
+# Egress allowlist for the OpenTelemetry Collector provider.
+#
+# Unlike New Relic (fixed list of EU FQDNs), the OTLP back-end varies per
+# operator (Grafana Cloud, Honeycomb, self-hosted Tempo/Mimir, etc.). This
+# template file is therefore intentionally empty — the installer derives the
+# FQDN from the operator-supplied --observability-endpoint=<url> at install
+# time and writes it to /etc/observability/opentelemetry.egress.
+#
+# Both configure-observability-egress.sh and the refresh service prefer
+# /etc/observability/<provider>.egress over this shipped template, so the
+# dynamic FQDN flows through the same ipset + ufw + refresh-timer machinery
+# as the static lists.
+#
+# Do not add FQDNs here.

@@ -55,9 +55,18 @@ if [[ -z "$PROVIDER" ]]; then
     exit 1
 fi
 
-EGRESS_FILE="$OBS_TEMPLATE_DIR/${PROVIDER}.egress"
-if [[ ! -f "$EGRESS_FILE" ]]; then
-    log_error "Egress FQDN list not found: $EGRESS_FILE"
+# Runtime override takes precedence over the shipped template. Providers
+# whose endpoint is operator-supplied (e.g. OpenTelemetry — the OTLP back-end
+# varies per deployment) write a runtime file to /etc/observability/.
+RUNTIME_EGRESS_FILE="$OBS_ETC_DIR/${PROVIDER}.egress"
+TEMPLATE_EGRESS_FILE="$OBS_TEMPLATE_DIR/${PROVIDER}.egress"
+
+if [[ -f "$RUNTIME_EGRESS_FILE" ]]; then
+    EGRESS_FILE="$RUNTIME_EGRESS_FILE"
+elif [[ -f "$TEMPLATE_EGRESS_FILE" ]]; then
+    EGRESS_FILE="$TEMPLATE_EGRESS_FILE"
+else
+    log_error "Egress FQDN list not found: $RUNTIME_EGRESS_FILE or $TEMPLATE_EGRESS_FILE"
     exit 1
 fi
 
@@ -189,8 +198,15 @@ provider_file="$OBS_ETC_DIR/provider"
 [[ -f "$provider_file" ]] || { echo "no provider configured"; exit 0; }
 provider="$(cat "$provider_file")"
 
-egress_file="$OBS_TEMPLATE_DIR/${provider}.egress"
-[[ -f "$egress_file" ]] || { echo "no egress file for $provider"; exit 0; }
+runtime_egress="$OBS_ETC_DIR/${provider}.egress"
+template_egress="$OBS_TEMPLATE_DIR/${provider}.egress"
+if [[ -f "$runtime_egress" ]]; then
+    egress_file="$runtime_egress"
+elif [[ -f "$template_egress" ]]; then
+    egress_file="$template_egress"
+else
+    echo "no egress file for $provider"; exit 0
+fi
 
 # Recreate the set fresh so stale IPs eventually age out.
 if ipset list "$IPSET_NAME" >/dev/null 2>&1; then

@@ -23,7 +23,7 @@ export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 set -euo pipefail
 
-SUPPORTED_PROVIDERS="newrelic"
+SUPPORTED_PROVIDERS="newrelic opentelemetry"
 
 # Environment-overridable paths (tests redirect to temp dirs)
 OBS_ETC_DIR="${OBS_ETC_DIR:-/etc/observability}"
@@ -36,12 +36,14 @@ OBS_TEMPLATE_DIR="$TEMPLATE_DIR/observability"
 
 PROVIDER=""
 KEY=""
+ENDPOINT=""
 FORCE=false
 
 for arg in "$@"; do
     case "$arg" in
         --provider=*) PROVIDER="${arg#*=}" ;;
         --observability-key=*) KEY="${arg#*=}" ;;
+        --observability-endpoint=*) ENDPOINT="${arg#*=}" ;;
         --force) FORCE=true ;;
     esac
 done
@@ -85,10 +87,42 @@ validate_args() {
         exit 1
     fi
 
-    if ! bash "$validate_tmpl" "$KEY"; then
+    # Providers that require a second value (endpoint URL).
+    case "$PROVIDER" in
+        opentelemetry)
+            if [[ -z "$ENDPOINT" ]]; then
+                log_error "Provider '$PROVIDER' requires --observability-endpoint=<url>"
+                exit 1
+            fi
+            ;;
+    esac
+
+    # Validator gets both values; providers that only use $1 ignore $2.
+    if ! bash "$validate_tmpl" "$KEY" "$ENDPOINT"; then
         # validator prints its own error
         exit 1
     fi
+}
+
+# ── per-provider env file rendering ─────────────────────────────────────────
+
+# Render the deterministic content of /etc/observability/<provider>.env to
+# stdout. Used for both writing the file and comparing it during the
+# idempotency check. New providers add a case arm here.
+render_env_content() {
+    case "$PROVIDER" in
+        newrelic)
+            printf 'NRIA_LICENSE_KEY=%s\n' "$KEY"
+            ;;
+        opentelemetry)
+            printf 'OTLP_ENDPOINT=%s\n' "$ENDPOINT"
+            printf 'OTLP_AUTH_HEADER=%s\n' "$KEY"
+            ;;
+        *)
+            log_error "No env content rendering configured for provider '$PROVIDER'"
+            exit 1
+            ;;
+    esac
 }
 
 # ── idempotency check ───────────────────────────────────────────────────────
@@ -108,27 +142,16 @@ already_configured() {
     # Provider must match
     [[ "$(cat "$provider_file" 2> /dev/null)" == "$PROVIDER" ]] || return 1
 
-    # Key must match
-    grep -qxF "${PROVIDER_KEY_ENV_NAME}=${KEY}" "$env_file" 2> /dev/null || return 1
+    # Env content (all values) must match
+    local expected actual
+    expected="$(render_env_content)"
+    actual="$(cat "$env_file" 2> /dev/null || true)"
+    [[ "$expected" == "$actual" ]] || return 1
 
     # Service must be active
     systemctl is-active --quiet observability-agent.service 2> /dev/null || return 1
 
     return 0
-}
-
-# ── env name for each provider's licence key ────────────────────────────────
-
-PROVIDER_KEY_ENV_NAME=""
-
-set_key_env_name() {
-    case "$PROVIDER" in
-        newrelic) PROVIDER_KEY_ENV_NAME="NRIA_LICENSE_KEY" ;;
-        *)
-            log_error "No key env name configured for provider '$PROVIDER'"
-            exit 1
-            ;;
-    esac
 }
 
 # ── write configs ───────────────────────────────────────────────────────────
@@ -155,7 +178,7 @@ write_env_file() {
     touch "$tmp"
     chmod 600 "$tmp"
     chown root:root "$tmp"
-    printf '%s=%s\n' "$PROVIDER_KEY_ENV_NAME" "$KEY" > "$tmp"
+    render_env_content > "$tmp"
     mv -f "$tmp" "$env_file"
     chmod 600 "$env_file"
 
@@ -168,6 +191,84 @@ write_compose_file() {
     cp "$src" "$dst"
     chmod 644 "$dst"
     log_info "Wrote $dst"
+}
+
+# Per-provider extra config files (beyond the compose file). Operators are
+# expected to edit the deployed copy in /opt/observability/<provider>/ rather
+# than the shipped template, so we only write these on first install or when
+# --force is set.
+write_provider_extras() {
+    case "$PROVIDER" in
+        opentelemetry)
+            local src="$OBS_TEMPLATE_DIR/opentelemetry.collector-config.yaml.template"
+            local dst="$OBS_OPT_DIR/opentelemetry/config.yaml"
+            if [[ ! -f "$dst" || "$FORCE" == true ]]; then
+                if [[ ! -f "$src" ]]; then
+                    log_error "Missing template: $src"
+                    exit 1
+                fi
+                cp "$src" "$dst"
+                chmod 644 "$dst"
+                log_info "Wrote $dst (collector pipeline config)"
+            else
+                log_info "Preserved existing $dst (use --force=observability to overwrite)"
+            fi
+            ;;
+    esac
+}
+
+# For providers whose egress FQDN is not statically known (e.g. OpenTelemetry,
+# where the back-end is operator-supplied), materialise a runtime egress file
+# at /etc/observability/<provider>.egress. configure-observability-egress.sh
+# and the refresh service prefer that file over the shipped template.
+write_runtime_egress() {
+    case "$PROVIDER" in
+        opentelemetry)
+            local host="$ENDPOINT"
+            host="${host#*://}" # strip scheme
+            host="${host%%/*}"  # strip path
+            host="${host%%:*}"  # strip port
+            if [[ -z "$host" ]]; then
+                log_error "Failed to derive FQDN from endpoint: $ENDPOINT"
+                exit 1
+            fi
+            local dst="$OBS_ETC_DIR/${PROVIDER}.egress"
+            local tmp="${dst}.tmp"
+            {
+                printf '# Runtime egress allowlist for provider %s\n' "$PROVIDER"
+                printf '# Derived from --observability-endpoint=%s\n' "$ENDPOINT"
+                printf '# Rewritten by install-observability.sh on each run.\n'
+                printf '%s\n' "$host"
+            } > "$tmp"
+            chmod 644 "$tmp"
+            mv -f "$tmp" "$dst"
+            log_info "Wrote $dst (FQDN: $host)"
+            ;;
+    esac
+}
+
+# Provider switching: if a previous provider is installed, tear down its
+# compose stack before we overwrite /etc/observability/provider. The generic
+# systemd unit's ExecStop reads the provider marker at stop time, so once the
+# marker is overwritten the old stack would never get stopped by systemd.
+stop_previous_provider() {
+    local provider_file="$OBS_ETC_DIR/provider"
+    [[ -f "$provider_file" ]] || return 0
+
+    local prev
+    prev="$(cat "$provider_file" 2> /dev/null || true)"
+    [[ -z "$prev" ]] && return 0
+    [[ "$prev" == "$PROVIDER" ]] && return 0
+
+    local prev_compose="$OBS_OPT_DIR/${prev}/docker-compose.yml"
+    if [[ ! -f "$prev_compose" ]]; then
+        log_warn "Previous provider '$prev' marker found but no compose file at $prev_compose"
+        return 0
+    fi
+
+    log_info "Switching provider: $prev → $PROVIDER. Stopping previous stack..."
+    docker compose -f "$prev_compose" down --remove-orphans 2> /dev/null ||
+        log_warn "Failed to stop previous provider stack cleanly — continuing"
 }
 
 write_systemd_unit() {
@@ -199,6 +300,7 @@ verify_running() {
     local container="newrelic-infra"
     case "$PROVIDER" in
         newrelic) container="newrelic-infra" ;;
+        opentelemetry) container="otel-collector" ;;
     esac
 
     log_info "Waiting up to 60s for $container to be running..."
@@ -245,7 +347,6 @@ main() {
     fi
 
     validate_args
-    set_key_env_name
 
     if already_configured; then
         log_info "Observability agent for '$PROVIDER' already configured and running — skipping (use --force to reconfigure)"
@@ -255,9 +356,12 @@ main() {
     log_info "Installing observability agent: provider=$PROVIDER"
 
     write_dirs
+    stop_previous_provider
     write_provider_marker
     write_env_file
     write_compose_file
+    write_provider_extras
+    write_runtime_egress
     write_systemd_unit
     configure_egress
     start_service
@@ -275,12 +379,19 @@ main() {
     echo ""
     echo "  Status:       systemctl status observability-agent"
     echo "  Logs:         journalctl -u observability-agent -n 50"
-    echo "  Agent logs:   docker logs newrelic-infra"
-    echo ""
     case "$PROVIDER" in
         newrelic)
+            echo "  Agent logs:   docker logs newrelic-infra"
+            echo ""
             echo "  Host should appear in New Relic (EU region) within ~2 minutes."
             echo "  Filter by custom attribute: managed_by = dockerHosting"
+            ;;
+        opentelemetry)
+            echo "  Agent logs:   docker logs otel-collector"
+            echo "  Health probe: curl -fsS http://127.0.0.1:13133/"
+            echo ""
+            echo "  Collector exports to: $ENDPOINT"
+            echo "  Customise pipeline:   $OBS_OPT_DIR/opentelemetry/config.yaml"
             ;;
     esac
     echo ""

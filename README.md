@@ -891,9 +891,17 @@ site/stack owns them. The agent is **opt-in** (default OFF), provider-pluggable,
 and managed as a **singleton per host** by systemd — not by any site's compose
 stack.
 
-Today the only supported provider is **New Relic Infrastructure (EU region)**.
-The mechanism is designed so additional providers (Datadog, OpenTelemetry
-Collector, Grafana Agent, …) can be added by dropping templates into
+Supported providers today:
+
+- **New Relic Infrastructure (EU region)** — single licence key, fixed FQDN
+  allowlist.
+- **OpenTelemetry Collector (contrib distribution)** — exports via OTLP/HTTPS
+  to any compatible back-end (Grafana Cloud, Honeycomb, self-hosted
+  Tempo/Mimir, …). Operator supplies the endpoint URL and an Authorization
+  header value.
+
+The mechanism is designed so additional providers (Datadog, Grafana Agent, …)
+can be added by dropping templates into
 [`templates/observability/`](templates/observability/) — see
 [Adding another provider](#adding-another-provider) below.
 
@@ -905,7 +913,7 @@ Collector, Grafana Agent, …) can be added by dropping templates into
 - Inventory snapshots — installed packages, sysctl, users, services.
 - All data egresses **only** to the configured provider's EU endpoints.
 
-### Install
+### Install (New Relic)
 
 ```bash
 sudo ./setup.sh --observability=newrelic --observability-key=$NR_KEY
@@ -943,6 +951,69 @@ Re-run setup with the new key:
 sudo ./setup.sh --observability=newrelic --observability-key=$NEW_KEY --force=observability
 ```
 
+### Install (OpenTelemetry Collector)
+
+```bash
+sudo ./setup.sh \
+  --observability=opentelemetry \
+  --observability-key="Bearer $OTLP_TOKEN" \
+  --observability-endpoint=https://otlp-gateway-prod-eu-west-2.grafana.net/otlp
+```
+
+The operator supplies two values:
+
+- `--observability-key=` is the **value of the `Authorization` header** the
+  collector will send on every OTLP/HTTPS request (e.g. `Bearer <token>` for
+  Grafana Cloud, `Basic <base64>` for Honeycomb classic, `api-key <token>` for
+  some self-hosted gateways). Stored in `/etc/observability/opentelemetry.env`
+  as `OTLP_AUTH_HEADER` (mode 600).
+- `--observability-endpoint=` is the **full HTTPS URL** of the OTLP back-end.
+  Stored as `OTLP_ENDPOINT` in the same env file. `http://` is rejected — the
+  egress allowlist is 443/tcp only.
+
+The installer:
+
+1. Validates both values (format only — runtime auth is verified by the
+   back-end on first request).
+2. Writes `/etc/observability/opentelemetry.env`.
+3. Writes `/opt/observability/opentelemetry/docker-compose.yml` from the
+   pinned `otel/opentelemetry-collector-contrib` image.
+4. Writes `/opt/observability/opentelemetry/config.yaml` — the collector's
+   pipeline definition. **This file is the customisation surface** for
+   operators who want non-default receivers / processors / exporters;
+   re-running setup without `--force=observability` will preserve operator
+   edits.
+5. Derives the FQDN from the endpoint URL, writes it to
+   `/etc/observability/opentelemetry.egress`, and runs the egress allowlist
+   refresh against that file.
+6. Installs the generic systemd unit and starts the collector.
+
+Default pipeline collects:
+
+- Host metrics via the `hostmetrics` receiver (cpu, memory, disk, filesystem,
+  network, load, paging, process inventory) — `/` is mounted at `/hostfs`
+  inside the container.
+- Per-container metrics via the `docker_stats` receiver (CPU, memory, network
+  RX/TX, block I/O) — the Docker socket is mounted read-only.
+- Resource attributes `service.instance.id = <hostname>` and
+  `managed_by = dockerHosting` (mirrors the NR custom-attribute semantics so
+  the same filter works across providers).
+
+The collector's `health_check` extension is bound to `127.0.0.1:13133` only:
+
+```bash
+curl -fsS http://127.0.0.1:13133/
+```
+
+Rotate the token / change the endpoint by re-running with the new value(s):
+
+```bash
+sudo ./setup.sh --observability=opentelemetry \
+  --observability-key="Bearer $NEW_TOKEN" \
+  --observability-endpoint=https://otlp.new.example.com \
+  --force=observability
+```
+
 ### Egress allowlist (ipset + refresh timer)
 
 ufw is the host's egress firewall; ufw has no native FQDN support. Approach:
@@ -956,7 +1027,9 @@ ufw is the host's egress firewall; ufw has no native FQDN support. Approach:
 - A systemd timer `observability-egress-refresh.timer` re-resolves the FQDNs on
   boot and daily (+ jitter) to track provider IP rotations.
 
-Provider FQDNs for New Relic EU1:
+Provider FQDNs for New Relic EU1 (shipped statically in
+`templates/observability/newrelic.egress`):
+
 - `infra-api.eu.newrelic.com`
 - `metric-api.eu.newrelic.com`
 - `log-api.eu.newrelic.com`
@@ -965,13 +1038,27 @@ Provider FQDNs for New Relic EU1:
 US endpoints are **not** allowlisted — outbound traffic to `*.us.newrelic.com`
 will be dropped by ufw default-deny-out.
 
+#### Egress allowlist (OpenTelemetry)
+
+Unlike New Relic, the OTLP back-end host varies per operator, so the FQDN
+list cannot be shipped statically. At install time the installer parses the
+host part out of `--observability-endpoint=<url>` and writes it to
+`/etc/observability/opentelemetry.egress` (one FQDN, the OTLP gateway). Both
+`configure-observability-egress.sh` and the daily refresh service prefer
+`/etc/observability/<provider>.egress` over the shipped template, so the
+dynamic FQDN flows through the same ipset + ufw + refresh-timer machinery as
+the static lists. Changing endpoints (re-run with a new
+`--observability-endpoint=` + `--force=observability`) rewrites the runtime
+file and refreshes the ipset.
+
 **Known limitation:** if a provider rotates IPs faster than the daily refresh
 window, brief connectivity gaps are possible until the next refresh. Force a
 refresh with `sudo systemctl start observability-egress-refresh.service`.
 
 ### Non-coexistence rule
 
-**Sites MUST NOT run their own `newrelic-infra` (or equivalent) container.**
+**Sites MUST NOT run their own `newrelic-infra`, `otel-collector`, or
+equivalent container.** Exactly one observability provider per host.
 
 Two agents on one host:
 - Double-count host CPU/memory/disk/network metrics.
@@ -1004,23 +1091,35 @@ authoritative vocabulary tables.
 
 ### Adding another provider
 
-To add a new observability provider (e.g. Datadog, OpenTelemetry Collector):
+To add a new observability provider (e.g. Datadog, Grafana Agent):
 
 1. Drop `templates/observability/<provider>.compose.template` — Compose file
-   for the agent. Use `network_mode: host`, `pid: host`, `/:/host:ro` if you
-   need host-kernel metrics; mount `/var/run/docker.sock:/var/run/docker.sock:ro`
-   for container visibility. Pin the image tag (no `:latest`).
+   for the agent. Use `network_mode: host`, `pid: host`, `/:/host:ro` (or
+   `/:/hostfs:ro,rslave` per provider convention) if you need host-kernel
+   metrics; mount `/var/run/docker.sock:/var/run/docker.sock:ro` for
+   container visibility. Pin the image tag (no `:latest`).
 2. Drop `templates/observability/<provider>.egress` — one FQDN per line; these
-   become the host's egress allowlist for that provider.
-3. Drop `templates/observability/<provider>.validate.sh` — exits 0 if the key
-   format is valid, non-zero otherwise. Called with the key as `$1`.
+   become the host's egress allowlist for that provider. If the back-end host
+   is operator-supplied rather than fixed, leave this file as a comment-only
+   placeholder and have the installer write the runtime list to
+   `/etc/observability/<provider>.egress` (the egress script + refresh
+   service prefer the runtime file over the shipped template). See the
+   OpenTelemetry provider for an example of the dynamic pattern.
+3. Drop `templates/observability/<provider>.validate.sh` — exits 0 if the
+   supplied values are well-formed, non-zero otherwise. Called with
+   `"$KEY" "$ENDPOINT"`; providers that only use the key ignore `$2`.
 4. Add `<provider>` to `SUPPORTED_PROVIDERS` in
    [`scripts/install-observability.sh`](scripts/install-observability.sh) and
-   add a `case` arm in `set_key_env_name` mapping `<provider>` → the env var
-   name the agent expects for its key.
+   add a `case` arm in `render_env_content` describing the env vars to write
+   into `/etc/observability/<provider>.env`. Add the container name to the
+   `verify_running` case statement.
+5. If the provider needs additional config files (beyond the compose file),
+   add a `case` arm in `write_provider_extras` and ship the template
+   alongside the others; the installer preserves operator edits to the
+   deployed copy unless `--force=observability` is set.
 
-The generic systemd unit, env-file layout, ipset egress mechanism, and
-non-coexistence rule apply unchanged.
+The generic systemd unit, env-file layout, ipset egress mechanism,
+previous-provider teardown, and non-coexistence rule apply unchanged.
 
 ## Development
 

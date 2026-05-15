@@ -59,21 +59,28 @@ OPTIONS
                                 mfa, observability
 
 Optional observability (opt-in, default OFF)
-  --observability=PROVIDER    Enable the host-level observability agent. Today
-                              the only supported PROVIDER is 'newrelic'. The agent
+  --observability=PROVIDER    Enable the host-level observability agent. Valid
+                              values: 'newrelic' or 'opentelemetry'. The agent
                               is a singleton per host — sites MUST NOT run their
                               own copy. To add another provider, drop templates
                               into templates/observability/ (see README).
   --observability-key=KEY     Licence/API key for the chosen provider. Required
-                              when --observability is set. Stored at
+                              when --observability is set. For 'opentelemetry'
+                              this is the OTLP Authorization header value (e.g.
+                              "Bearer xxx"). Stored at
                               /etc/observability/<provider>.env (mode 600).
+  --observability-endpoint=URL
+                              OTLP/HTTPS back-end URL. Required when
+                              --observability=opentelemetry; ignored otherwise.
+                              The host part is added to the egress allowlist.
 
   --newrelic                  Back-compat alias for --observability=newrelic.
   --newrelic-key=KEY          Back-compat alias for --observability-key=KEY.
 
 EXAMPLES
   sudo ./setup.sh
-  sudo ./setup.sh --observability=newrelic --observability-key=$NR_KEY
+  sudo ./setup.sh --observability=newrelic --observability-key=\$NR_KEY
+  sudo ./setup.sh --observability=opentelemetry --observability-key="Bearer \$TOKEN" --observability-endpoint=https://otlp.example.com/otlp
   sudo ./setup.sh --force=traefik,firewall
   sudo ./setup.sh --update
   sudo ./setup.sh --report
@@ -300,12 +307,14 @@ run_full_setup() {
     local FORCE_STEPS=""
     local OBS_PROVIDER=""
     local OBS_KEY=""
+    local OBS_ENDPOINT=""
     for arg in "$@"; do
         case "$arg" in
             --force) FORCE_ALL=true ;;
             --force=*) FORCE_STEPS="${arg#*=}" ;;
             --observability=*) OBS_PROVIDER="${arg#*=}" ;;
             --observability-key=*) OBS_KEY="${arg#*=}" ;;
+            --observability-endpoint=*) OBS_ENDPOINT="${arg#*=}" ;;
             --newrelic) OBS_PROVIDER="newrelic" ;;
             --newrelic-key=*) OBS_KEY="${arg#*=}" ;;
         esac
@@ -319,6 +328,10 @@ run_full_setup() {
     fi
     if [[ -n "$OBS_PROVIDER" && -z "$OBS_KEY" ]]; then
         log_error "--observability=$OBS_PROVIDER requires --observability-key=<key>"
+        exit 1
+    fi
+    if [[ "$OBS_PROVIDER" == "opentelemetry" && -z "$OBS_ENDPOINT" ]]; then
+        log_error "--observability=opentelemetry requires --observability-endpoint=<url>"
         exit 1
     fi
 
@@ -376,6 +389,7 @@ run_full_setup() {
             --provider="$OBS_PROVIDER"
             --observability-key="$OBS_KEY"
         )
+        [ -n "$OBS_ENDPOINT" ] && _obs_args+=("--observability-endpoint=$OBS_ENDPOINT")
         [ -n "$_obs_force" ] && _obs_args+=("$_obs_force")
         bash "$DOCKERHOSTING_DIR/scripts/install-observability.sh" "${_obs_args[@]}"
     fi
