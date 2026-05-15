@@ -97,6 +97,20 @@ ufw default deny outgoing > /dev/null
 ufw default deny forward > /dev/null
 
 if [[ "$UFW_ACTIVE" == false ]]; then
+    # Preserve existing connections (notably the SSH session running this
+    # script) across the cold start. Until ufw enables, nf_conntrack is not
+    # loaded and the live SSH connection has no entry in the conntrack table.
+    # When ufw enable loads conntrack, mid-stream packets from that session
+    # cannot be matched against a SYN and — with the kernel default
+    # nf_conntrack_tcp_loose=0 — are classified as INVALID and dropped by
+    # ufw's INVALID-drop rule. Setting tcp_loose=1 makes conntrack accept
+    # mid-stream packets as ESTABLISHED so the existing session survives.
+    modprobe nf_conntrack > /dev/null 2>&1 || true
+    if [[ -w /proc/sys/net/netfilter/nf_conntrack_tcp_loose ]]; then
+        echo "[INFO] Setting nf_conntrack_tcp_loose=1 to preserve in-flight sessions"
+        echo 1 > /proc/sys/net/netfilter/nf_conntrack_tcp_loose
+    fi
+
     echo "[INFO] Enabling UFW firewall (cold start)..."
     ufw --force enable
 else
