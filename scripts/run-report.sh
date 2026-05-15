@@ -48,16 +48,11 @@ _rule() {
     echo -e "${BLUE}═══════════════════════════════════════════════════════${NC}"
 }
 
-# Escape stdin as a JSON string literal (including surrounding quotes)
+# Escape stdin as a JSON string literal (including surrounding quotes).
+# Pure-bash ${var//x/y} is O(n²); Trivy JSON bodies are multi-MB and would
+# pin a CPU for minutes. python3's json.dumps does it in linear time.
 _json_escape() {
-    local s
-    s=$(cat)
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\t'/\\t}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\n'/\\n}"
-    printf '"%s"' "$s"
+    python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'
 }
 
 # Append a section to Markdown, JSON, and terminal output.
