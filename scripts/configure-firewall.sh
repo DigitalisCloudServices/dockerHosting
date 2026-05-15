@@ -2,68 +2,107 @@
 export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 #############################################
-# Configure UFW firewall with sensible defaults
+# Configure UFW firewall with sensible defaults.
+#
+# Design note: this script must never disable a running ufw, and must
+# never trigger a full disable→enable cycle. On Debian Trixie's
+# iptables-nft backend, that transition has been observed to drop
+# in-flight SSH sessions (the conntrack ESTABLISHED accept rule is not
+# reliably matching across the flush window). Instead:
+#   - If ufw is already active, apply each rule incrementally with
+#     `ufw allow …` / `ufw default …` (no disable/enable).
+#   - If ufw is inactive, stage SSH allow FIRST in the config, then
+#     remaining rules, then default-deny policies, and only then call
+#     `ufw enable` once. SSH being the first rule guarantees the cold
+#     enable cannot orphan the management session.
 #############################################
 
 set -e
 
-echo "[INFO] Configuring UFW firewall..."
-
 FORCE=false
+NO_DETACH=false
 for arg in "$@"; do
-    [[ "$arg" == "--force" ]] && FORCE=true
+    case "$arg" in
+        --force) FORCE=true ;;
+        --no-detach) NO_DETACH=true ;;
+    esac
 done
 
-if [[ "$FORCE" == false ]] && command -v ufw &> /dev/null && ufw status 2> /dev/null | grep -q "Status: active"; then
-    echo "[INFO] Firewall already configured and active — skipping (use --force to reconfigure)"
-    ufw status verbose
-    exit 0
+# ── Auto-detach via systemd-run ─────────────────────────────────────────────
+# Re-exec under a transient systemd unit so the reconfiguration survives a
+# stalled SSH session. The unit is owned by systemd, not by the user session,
+# so SIGHUP to the SSH shell does not propagate to it. We `--wait --pty` so
+# interactive output is preserved; if the SSH session dies mid-run, reconnect
+# and inspect with `journalctl -u <unit> -b` (the unit name is printed below).
+if [[ "${UFW_DETACHED:-0}" != "1" ]] &&
+    [[ "$NO_DETACH" == false ]] &&
+    command -v systemd-run > /dev/null 2>&1; then
+    UNIT="ufw-reconfig-$$"
+    echo "[INFO] Detaching firewall reconfiguration as systemd unit: $UNIT"
+    echo "[INFO] If SSH stalls, reconnect and run: journalctl -u $UNIT -b"
+    exec systemd-run \
+        --unit="$UNIT" \
+        --collect \
+        --setenv=UFW_DETACHED=1 \
+        --pty --wait --quiet \
+        "$0" "$@"
 fi
 
-# Install UFW if not present
+echo "[INFO] Configuring UFW firewall..."
+
 if ! command -v ufw &> /dev/null; then
     echo "[INFO] Installing UFW..."
     apt-get install -y ufw
 fi
 
-# Disable UFW temporarily to configure
-ufw --force disable
+UFW_ACTIVE=false
+if ufw status 2> /dev/null | grep -q "Status: active"; then
+    UFW_ACTIVE=true
+fi
 
-# Set default policies — deny all inbound; explicit allow-list for outbound
-ufw default deny incoming
-ufw default deny outgoing
-ufw default deny forward
+if [[ "$UFW_ACTIVE" == true && "$FORCE" == false ]]; then
+    echo "[INFO] Firewall already active — skipping (use --force to reapply rules in place)"
+    ufw status verbose
+    exit 0
+fi
 
-# --- INBOUND ---
-ufw allow in 22/tcp comment 'SSH'
-ufw allow in 80/tcp comment 'HTTP'
-ufw allow in 443/tcp comment 'HTTPS'
+# ── SSH first, always ───────────────────────────────────────────────────────
+# Add SSH inbound before anything else so a cold `ufw enable` (below) loads
+# this rule alongside the new default-deny in a single atomic apply.
+echo "[INFO] Ensuring SSH inbound allow rule is present..."
+ufw allow in 22/tcp comment 'SSH' > /dev/null
 
-# Allow traffic from Docker bridge networks (container → host)
-ufw allow in from 172.16.0.0/12
-ufw allow in from 192.168.0.0/16
+# ── Other inbound ───────────────────────────────────────────────────────────
+ufw allow in 80/tcp comment 'HTTP' > /dev/null
+ufw allow in 443/tcp comment 'HTTPS' > /dev/null
+ufw allow in from 172.16.0.0/12 > /dev/null
+ufw allow in from 192.168.0.0/16 > /dev/null
 
-# --- OUTBOUND ---
-# DNS (standard — UDP + TCP for large responses/zone transfers)
-ufw allow out 53/udp comment 'DNS'
-ufw allow out 53/tcp comment 'DNS (TCP)'
-# DNS over TLS (encrypted DNS — e.g. systemd-resolved stub, Unbound)
-ufw allow out 853/tcp comment 'DNS over TLS'
-# HTTP/HTTPS (apt updates, Docker pulls, Let's Encrypt, DNS over HTTPS via 443)
-ufw allow out 80/tcp comment 'HTTP out'
-ufw allow out 443/tcp comment 'HTTPS out'
-# NTP (chrony)
-ufw allow out 123/udp comment 'NTP'
-# SMTP submission (msmtp / email notifications)
-ufw allow out 587/tcp comment 'SMTP submission'
-# Loopback (always required for local inter-process communication)
-ufw allow out on lo
+# ── Outbound ────────────────────────────────────────────────────────────────
+ufw allow out 53/udp comment 'DNS' > /dev/null
+ufw allow out 53/tcp comment 'DNS (TCP)' > /dev/null
+ufw allow out 853/tcp comment 'DNS over TLS' > /dev/null
+ufw allow out 80/tcp comment 'HTTP out' > /dev/null
+ufw allow out 443/tcp comment 'HTTPS out' > /dev/null
+ufw allow out 123/udp comment 'NTP' > /dev/null
+ufw allow out 587/tcp comment 'SMTP submission' > /dev/null
+ufw allow out on lo > /dev/null
 
-# Enable UFW
-echo "[INFO] Enabling UFW firewall..."
-ufw --force enable
+# ── Default policies ────────────────────────────────────────────────────────
+# Applied AFTER allow rules. On a running ufw, each `ufw default` writes the
+# new policy and performs an internal sync that preserves established
+# conntrack. On an inactive ufw, these are config-only until `ufw enable`.
+ufw default deny incoming > /dev/null
+ufw default deny outgoing > /dev/null
+ufw default deny forward > /dev/null
 
-# Show status
+if [[ "$UFW_ACTIVE" == false ]]; then
+    echo "[INFO] Enabling UFW firewall (cold start)..."
+    ufw --force enable
+else
+    echo "[INFO] Rules applied to running firewall (no disable/enable cycle)"
+fi
+
 echo ""
 echo "[INFO] Firewall configuration complete!"
 ufw status verbose

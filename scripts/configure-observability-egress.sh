@@ -33,13 +33,34 @@ OBS_TEMPLATE_DIR="$TEMPLATE_DIR/observability"
 
 PROVIDER=""
 FORCE=false
+NO_DETACH=false
 
 for arg in "$@"; do
     case "$arg" in
         --provider=*) PROVIDER="${arg#*=}" ;;
         --force) FORCE=true ;;
+        --no-detach) NO_DETACH=true ;;
     esac
 done
+
+# ── Auto-detach via systemd-run ─────────────────────────────────────────────
+# Re-exec under a transient systemd unit so the work survives a stalled SSH
+# session. The unit is owned by systemd, not by the user session, so SIGHUP
+# to the SSH shell does not propagate to it. If SSH dies mid-run, reconnect
+# and inspect with `journalctl -u <unit> -b`.
+if [[ "${OBS_EGRESS_DETACHED:-0}" != "1" ]] &&
+    [[ "$NO_DETACH" == false ]] &&
+    command -v systemd-run > /dev/null 2>&1; then
+    UNIT="obs-egress-reconfig-$$"
+    echo "[INFO] Detaching reconfiguration as systemd unit: $UNIT"
+    echo "[INFO] If SSH stalls, reconnect and run: journalctl -u $UNIT -b"
+    exec systemd-run \
+        --unit="$UNIT" \
+        --collect \
+        --setenv=OBS_EGRESS_DETACHED=1 \
+        --pty --wait --quiet \
+        "$0" "$@"
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -170,10 +191,20 @@ apply_ufw_rule() {
 
     log_info "Added ufw rule for ipset '$IPSET_NAME' (443/tcp out)"
 
-    # Reload ufw to apply
+    # Apply the rule to the running firewall directly. We avoid `ufw reload`
+    # because it flushes and rebuilds the ruleset non-atomically, which drops
+    # the conntrack ESTABLISHED accept rule long enough to kill in-flight SSH
+    # sessions. The rule is already persisted in before.rules above, so reboot
+    # / future reloads pick it up.
     if ufw status 2> /dev/null | grep -q "Status: active"; then
-        ufw reload > /dev/null
-        log_info "Reloaded ufw"
+        if ! iptables -C ufw-before-output -p tcp -m set --match-set "$IPSET_NAME" dst \
+            --dport 443 -j ACCEPT 2> /dev/null; then
+            iptables -I ufw-before-output -p tcp -m set --match-set "$IPSET_NAME" dst \
+                --dport 443 -j ACCEPT
+            log_info "Inserted live iptables rule for ipset '$IPSET_NAME'"
+        else
+            log_info "Live iptables rule for ipset '$IPSET_NAME' already present"
+        fi
     fi
 }
 
