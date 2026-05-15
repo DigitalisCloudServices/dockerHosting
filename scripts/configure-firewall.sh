@@ -81,6 +81,20 @@ if [[ "$RESET" == true ]]; then
     echo "[INFO] Resetting UFW (--reset) — prior rules backed up to /etc/ufw/*.<timestamp>"
     ufw --force reset > /dev/null
     UFW_ACTIVE=false
+
+    # Strip any dockerHosting markers left in before.rules from prior
+    # observability configurations. These reference an ipset (obs_egress_ips)
+    # which may no longer exist; iptables-restore fails the entire rule load
+    # if it encounters a reference to a missing set, leaving ufw in a partial
+    # state with the default DROP policy active but the conntrack ESTABLISHED
+    # accept rule never loaded — which kills in-flight SSH sessions.
+    if [[ -f /etc/ufw/before.rules ]] && grep -q 'dockerHosting:' /etc/ufw/before.rules; then
+        echo "[INFO] Stripping dockerHosting markers from /etc/ufw/before.rules"
+        sed -i '/dockerHosting:/d' /etc/ufw/before.rules
+    fi
+    if [[ -f /etc/ufw/before6.rules ]] && grep -q 'dockerHosting:' /etc/ufw/before6.rules; then
+        sed -i '/dockerHosting:/d' /etc/ufw/before6.rules
+    fi
 fi
 
 # ── SSH first, always ───────────────────────────────────────────────────────
