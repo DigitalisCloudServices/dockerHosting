@@ -21,10 +21,15 @@ set -e
 
 FORCE=false
 NO_DETACH=false
+RESET=false
 for arg in "$@"; do
     case "$arg" in
         --force) FORCE=true ;;
         --no-detach) NO_DETACH=true ;;
+        --reset)
+            RESET=true
+            FORCE=true # reset only makes sense when we proceed to reconfigure
+            ;;
     esac
 done
 
@@ -64,6 +69,18 @@ if [[ "$UFW_ACTIVE" == true && "$FORCE" == false ]]; then
     echo "[INFO] Firewall already active — skipping (use --force to reapply rules in place)"
     ufw status verbose
     exit 0
+fi
+
+# ── Optional clean slate ────────────────────────────────────────────────────
+# --reset wipes ufw user rules and disables it before we reconfigure. Safe
+# for the live SSH session: `ufw --force reset` sets policies back to ACCEPT
+# (effectively no firewall) and backs up the prior config to /etc/ufw/*.<ts>.
+# We then fall through into the normal cold-start path below, which already
+# includes the tcp_loose conntrack safeguard.
+if [[ "$RESET" == true ]]; then
+    echo "[INFO] Resetting UFW (--reset) — prior rules backed up to /etc/ufw/*.<timestamp>"
+    ufw --force reset > /dev/null
+    UFW_ACTIVE=false
 fi
 
 # ── SSH first, always ───────────────────────────────────────────────────────
