@@ -11,6 +11,10 @@ RemainAfterExit=yes
 WorkingDirectory=/opt/observability
 EnvironmentFile=-/etc/observability/agent.env
 ExecStartPre=/bin/sh -c 'test -f /etc/observability/provider'
+# Tear down any leftover containers from a previous failed start before bringing the stack up.
+# Without this, a container left in Created state (e.g. after a daemon error) blocks `up -d`
+# with "container name already in use" because systemd's start path skipped ExecStop.
+ExecStartPre=-/bin/sh -c '/usr/bin/docker compose -f "/opt/observability/$$(cat /etc/observability/provider)/docker-compose.yml" down --remove-orphans'
 ExecStart=/bin/sh -c '/usr/bin/docker compose -f "/opt/observability/$$(cat /etc/observability/provider)/docker-compose.yml" up -d'
 ExecStop=/bin/sh -c '/usr/bin/docker compose -f "/opt/observability/$$(cat /etc/observability/provider)/docker-compose.yml" down'
 ExecReload=/bin/sh -c '/usr/bin/docker compose -f "/opt/observability/$$(cat /etc/observability/provider)/docker-compose.yml" restart'
