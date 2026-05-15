@@ -263,6 +263,38 @@ sudo ./setup.sh --force=ntp
 sudo ./setup.sh --force=apparmor,firewall
 ```
 
+### Audit report (`--report`)
+
+Generate a passive, read-only posture audit of the host. Produces a Markdown
+log and a JSON sidecar under `/var/log/dockerHosting/` and prints a coloured
+summary to the terminal. No active probes (no nmap), no mutations.
+
+```bash
+sudo ./setup.sh --report
+```
+
+Outputs:
+
+- `/var/log/dockerHosting/audit-report-<host>-<UTC-ISO-timestamp>.log` (Markdown)
+- `/var/log/dockerHosting/audit-report-<host>-<UTC-ISO-timestamp>.log.json` (sidecar)
+- Both files are mode `0640`, owner `root:adm`, and rotated weekly (12 kept).
+
+Sections:
+
+1. Host identity (hostnamectl, kernel, time sync, uptime)
+2. Patch level (apt upgradable, unattended-upgrades, reboot-pending kernel)
+3. Host CVEs (debsecan, grouped by severity)
+4. Container image CVEs (Trivy via `scan-image.sh --json`)
+5. UFW state (default policies, IPv6, logging)
+6. Listening sockets vs UFW (passive target-identification, substitutes for nmap)
+7. Running containers (image, restart policy, user, mounts, caps)
+8. Traefik dynamic routes summary
+9. Failed SSH auth in the last 24h + fail2ban status
+10. Hardening posture (AppArmor, sshd_config, auditd)
+11. Observability — New Relic detection (host agent + container presence)
+
+Maps to NIST SP 800-115 §§3.1, 3.2, 3.3, 4.1, 4.4.
+
 ### Install Docker Only
 
 ```bash
@@ -339,6 +371,10 @@ See [docs/compliance.md](docs/compliance.md) for full framework mapping (ISO 270
 - Docker container log limits
 - System log management
 - Email notifications for system alerts (optional)
+- **Observability agent (opt-in)** — pluggable host-level singleton; see
+  [Observability (pluggable)](#observability-pluggable) below. Today supports
+  New Relic (EU region); additional providers slot in by dropping templates
+  into [`templates/observability/`](templates/observability/).
 
 ### Email Notifications
 - Lightweight SMTP relay using msmtp
@@ -846,6 +882,145 @@ Common issues:
 - **Database not found**: Initialization may have failed, check `/var/log/aide/aide-init.log`
 - **False positives**: After making authorized changes, run `sudo aide-update` to update the baseline
 - **Check failures**: AIDE detects changes - review the report carefully to determine if changes are authorized
+
+## Observability (pluggable)
+
+dockerHosting can install an optional host-level observability agent that
+monitors the host kernel and every Docker container regardless of which
+site/stack owns them. The agent is **opt-in** (default OFF), provider-pluggable,
+and managed as a **singleton per host** by systemd — not by any site's compose
+stack.
+
+Today the only supported provider is **New Relic Infrastructure (EU region)**.
+The mechanism is designed so additional providers (Datadog, OpenTelemetry
+Collector, Grafana Agent, …) can be added by dropping templates into
+[`templates/observability/`](templates/observability/) — see
+[Adding another provider](#adding-another-provider) below.
+
+### What the agent does
+
+- Host metrics — CPU, memory, disk, network, process inventory, kernel info.
+- Container metrics — per-container CPU/memory/network/IO via the Docker socket
+  (mounted read-only) and label inventory.
+- Inventory snapshots — installed packages, sysctl, users, services.
+- All data egresses **only** to the configured provider's EU endpoints.
+
+### Install
+
+```bash
+sudo ./setup.sh --observability=newrelic --observability-key=$NR_KEY
+```
+
+A back-compatible alias is accepted: `--newrelic --newrelic-key=$NR_KEY`.
+
+The installer:
+1. Validates the licence-key format (provider-specific validator).
+2. Writes `/etc/observability/newrelic.env` (mode 600, root:root) with `NRIA_LICENSE_KEY=…`.
+3. Writes `/opt/observability/newrelic/docker-compose.yml`.
+4. Installs the generic systemd unit `observability-agent.service`.
+5. Configures the egress allowlist (see below).
+6. Enables and starts the unit; waits up to 60 s for the container to be running.
+
+The script is idempotent: re-running with the same key is a no-op; re-running
+with a different key updates the env file and restarts the service atomically.
+
+### Verify
+
+```bash
+systemctl status observability-agent
+docker ps --filter name=newrelic-infra
+docker logs newrelic-infra
+```
+
+The host should appear in the New Relic UI under the **EU region** within ~2
+minutes. Filter by custom attribute `managed_by = dockerHosting` to find it.
+
+### Rotate the licence key
+
+Re-run setup with the new key:
+
+```bash
+sudo ./setup.sh --observability=newrelic --observability-key=$NEW_KEY --force=observability
+```
+
+### Egress allowlist (ipset + refresh timer)
+
+ufw is the host's egress firewall; ufw has no native FQDN support. Approach:
+
+- `scripts/configure-observability-egress.sh` creates ipset `obs_egress_ips`,
+  resolves the provider's FQDN list (e.g. `templates/observability/newrelic.egress`)
+  via the system resolver (no DNS-layer change — systemd-resolved is untouched),
+  and adds the IPs to the set.
+- A ufw `before.rules` line `-m set --match-set obs_egress_ips dst --dport 443
+  -j ACCEPT` allows outbound HTTPS to those IPs only.
+- A systemd timer `observability-egress-refresh.timer` re-resolves the FQDNs on
+  boot and daily (+ jitter) to track provider IP rotations.
+
+Provider FQDNs for New Relic EU1:
+- `infra-api.eu.newrelic.com`
+- `metric-api.eu.newrelic.com`
+- `log-api.eu.newrelic.com`
+- `identity-api.eu.newrelic.com`
+
+US endpoints are **not** allowlisted — outbound traffic to `*.us.newrelic.com`
+will be dropped by ufw default-deny-out.
+
+**Known limitation:** if a provider rotates IPs faster than the daily refresh
+window, brief connectivity gaps are possible until the next refresh. Force a
+refresh with `sudo systemctl start observability-egress-refresh.service`.
+
+### Non-coexistence rule
+
+**Sites MUST NOT run their own `newrelic-infra` (or equivalent) container.**
+
+Two agents on one host:
+- Double-count host CPU/memory/disk/network metrics.
+- Produce duplicate per-container reports.
+- Conflict on custom attributes (the second-registered agent overwrites the
+  first in NR's host inventory).
+
+See [VelaAir feature-469](https://github.com/DigitalisCloudServices/VelaAir/blob/main/docs/workstream/improvements/workInProgress/feature-469-newrelic-infra-agent-compose-pattern.md)
+for the site-side companion documentation.
+
+### Site label vocabulary
+
+Sites should label their containers so operators can filter them in the
+provider UI. VelaAir uses the following keys — other sites on this host are
+encouraged to adopt the same scheme:
+
+| Label key                  | Vocabulary                                       | Notes                          |
+|----------------------------|--------------------------------------------------|--------------------------------|
+| `com.velaair.environment`  | `prod`, `staging`, `dev`                         | Lifecycle stage                |
+| `com.velaair.tier`         | `frontend`, `backend`, `infra`                   | Architectural tier             |
+| `com.velaair.role`         | `web`, `api`, `worker`, `proxy`, `db`            | Functional role                |
+| `com.velaair.team`         | `platform`, `web`, `data`, …                     | Ownership                      |
+| `com.velaair.profile`      | `default`, `lean`, `debug`                       | Deployment profile             |
+| `com.velaair.slot`         | `blue`, `green`                                  | Only on blue/green workloads   |
+| `com.velaair.replica`      | `1`, `2`, …                                      | Only on multi-replica services |
+
+In the New Relic UI, navigate to **Infrastructure → Third-party services →
+Docker** and filter on any of the above. See VelaAir F469 §2.2 for the
+authoritative vocabulary tables.
+
+### Adding another provider
+
+To add a new observability provider (e.g. Datadog, OpenTelemetry Collector):
+
+1. Drop `templates/observability/<provider>.compose.template` — Compose file
+   for the agent. Use `network_mode: host`, `pid: host`, `/:/host:ro` if you
+   need host-kernel metrics; mount `/var/run/docker.sock:/var/run/docker.sock:ro`
+   for container visibility. Pin the image tag (no `:latest`).
+2. Drop `templates/observability/<provider>.egress` — one FQDN per line; these
+   become the host's egress allowlist for that provider.
+3. Drop `templates/observability/<provider>.validate.sh` — exits 0 if the key
+   format is valid, non-zero otherwise. Called with the key as `$1`.
+4. Add `<provider>` to `SUPPORTED_PROVIDERS` in
+   [`scripts/install-observability.sh`](scripts/install-observability.sh) and
+   add a `case` arm in `set_key_env_name` mapping `<provider>` → the env var
+   name the agent expects for its key.
+
+The generic systemd unit, env-file layout, ipset egress mechanism, and
+non-coexistence rule apply unchanged.
 
 ## Development
 

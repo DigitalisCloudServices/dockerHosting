@@ -1,0 +1,11 @@
+# Egress allowlist FQDNs for the active observability provider.
+# One FQDN per line. Lines starting with # and blank lines are ignored.
+# These are resolved into ipset 'obs_egress_ips' at install time and refreshed
+# daily by newrelic-egress-refresh.timer.
+#
+# New Relic EU region (GDPR-required for UK/EU hosts).
+# https://docs.newrelic.com/docs/new-relic-solutions/get-started/networks/
+infra-api.eu.newrelic.com
+metric-api.eu.newrelic.com
+log-api.eu.newrelic.com
+identity-api.eu.newrelic.com

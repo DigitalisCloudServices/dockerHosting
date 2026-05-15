@@ -18,6 +18,7 @@ export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #                            Example: --severity CRITICAL,HIGH
 #   --ignore-unfixed         Skip vulnerabilities with no fix available
 #   --no-fail                Report findings but always exit 0 (audit mode)
+#   --json                   Emit Trivy results as JSON on stdout (for tools)
 #   --verify-signature       Verify each image has a valid Cosign signature
 #   --cosign-key <path>      Path to Cosign public key (PEM). Omit to use
 #                            keyless Sigstore OIDC verification instead.
@@ -30,6 +31,7 @@ set -euo pipefail
 SEVERITY="CRITICAL"
 IGNORE_UNFIXED=false
 NO_FAIL=false
+JSON_OUTPUT=false
 COMPOSE_FILE=""
 VERIFY_SIGNATURE=false
 COSIGN_KEY=""
@@ -47,6 +49,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --no-fail)
+            NO_FAIL=true
+            shift
+            ;;
+        --json)
+            JSON_OUTPUT=true
             NO_FAIL=true
             shift
             ;;
@@ -176,12 +183,23 @@ if [[ ${#IMAGES[@]} -eq 0 ]]; then
     exit 1
 fi
 
-TRIVY_FLAGS=(--exit-code 1 --severity "$SEVERITY" --format table)
+if [[ "$JSON_OUTPUT" == true ]]; then
+    TRIVY_FLAGS=(--exit-code 0 --severity "$SEVERITY" --format json --quiet)
+else
+    TRIVY_FLAGS=(--exit-code 1 --severity "$SEVERITY" --format table)
+fi
 [[ "$IGNORE_UNFIXED" == true ]] && TRIVY_FLAGS+=(--ignore-unfixed)
 
 OVERALL_EXIT=0
 
 for image in "${IMAGES[@]}"; do
+    if [[ "$JSON_OUTPUT" == true ]]; then
+        # JSON mode: only Trivy JSON goes to stdout; everything else to stderr
+        echo "[INFO] Scanning $image (--json)" >&2
+        trivy image "${TRIVY_FLAGS[@]}" "$image" || true
+        continue
+    fi
+
     echo ""
     echo "[INFO] ─────────────────────────────────────────"
     echo "[INFO] Scanning image: $image"
@@ -212,6 +230,8 @@ for image in "${IMAGES[@]}"; do
         fi
     fi
 done
+
+[[ "$JSON_OUTPUT" == true ]] && exit 0
 
 echo ""
 if [[ "$OVERALL_EXIT" -eq 0 ]]; then

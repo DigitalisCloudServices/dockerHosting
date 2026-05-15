@@ -1,0 +1,26 @@
+[Unit]
+Description=Observability agent (host-level singleton, provider-agnostic wrapper)
+Documentation=file:///opt/dockerHosting/README.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/observability
+EnvironmentFile=-/etc/observability/agent.env
+ExecStartPre=/bin/sh -c 'test -f /etc/observability/provider'
+ExecStart=/bin/sh -c '/usr/bin/docker compose -f "/opt/observability/$$(cat /etc/observability/provider)/docker-compose.yml" up -d'
+ExecStop=/bin/sh -c '/usr/bin/docker compose -f "/opt/observability/$$(cat /etc/observability/provider)/docker-compose.yml" down'
+ExecReload=/bin/sh -c '/usr/bin/docker compose -f "/opt/observability/$$(cat /etc/observability/provider)/docker-compose.yml" restart'
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=observability-agent
+
+[Install]
+WantedBy=multi-user.target

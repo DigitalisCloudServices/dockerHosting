@@ -97,4 +97,25 @@ else
     echo "[INFO] Logrotate configuration test passed"
 fi
 
+# Host-wide stanza for dockerHosting audit reports (idempotent).
+# Reports live under /var/log/dockerHosting/ and are written by run-report.sh.
+# Skip silently if /etc/logrotate.d is not writable (e.g. inside test sandbox).
+DH_AUDIT_CONF="/etc/logrotate.d/dockerHosting-audit"
+if [ ! -f "$DH_AUDIT_CONF" ] && [ -w /etc/logrotate.d ]; then
+    cat > "$DH_AUDIT_CONF" << 'EOF'
+/var/log/dockerHosting/*.log
+/var/log/dockerHosting/*.log.json {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+}
+EOF
+    chmod 644 "$DH_AUDIT_CONF"
+    echo "[INFO] Host-wide logrotate stanza created: $DH_AUDIT_CONF"
+fi
+
 echo "[INFO] Log rotation setup complete for $SITE_NAME"

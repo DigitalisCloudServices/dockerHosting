@@ -14,8 +14,18 @@ set -e # Exit on error
 # Ensure sbin directories are in PATH (may be missing when invoked via sudo/curl|bash)
 export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Auto-elevate to root if not already running as root
-if [ "$EUID" -ne 0 ]; then
+# --help / -h: print usage immediately, before any privilege escalation
+for _arg in "$@"; do
+    case "$_arg" in
+        --help | -h)
+            _help_requested=1
+            break
+            ;;
+    esac
+done
+
+# Auto-elevate to root if not already running as root (except for --help)
+if [ "$EUID" -ne 0 ] && [ -z "${_help_requested:-}" ]; then
     echo "This script requires root privileges. Re-running with sudo..."
     exec sudo "$0" "$@"
 fi
@@ -29,6 +39,46 @@ NC='\033[0m' # No Color
 # Configuration
 DOCKERHOSTING_REPO="https://github.com/DigitalisCloudServices/dockerHosting.git"
 DOCKERHOSTING_DIR="/opt/dockerHosting"
+
+# Display usage / help text
+show_help() {
+    cat << 'EOF'
+Usage: setup.sh [OPTIONS]
+
+Bootstrap a Debian Trixie server: installs Docker, Traefik, firewall, and
+the dockerHosting security baseline, then runs full hardening.
+
+OPTIONS
+  --update                    Pull latest dockerHosting repo and exit (no setup run).
+  --report                    Run host audit report and exit (no mutations).
+  --force                     Force re-run every setup step, even if already configured.
+  --force=step1,step2,...     Force only the named step(s). Valid steps:
+                                packages, docker, traefik, firewall, kernel, ntp,
+                                audit, auto-updates, harden-docker, apparmor, pam,
+                                aide, shm, fail2ban, email, bootloader, usb, ssh,
+                                mfa, observability
+
+Optional observability (opt-in, default OFF)
+  --observability=PROVIDER    Enable the host-level observability agent. Today
+                              the only supported PROVIDER is 'newrelic'. The agent
+                              is a singleton per host — sites MUST NOT run their
+                              own copy. To add another provider, drop templates
+                              into templates/observability/ (see README).
+  --observability-key=KEY     Licence/API key for the chosen provider. Required
+                              when --observability is set. Stored at
+                              /etc/observability/<provider>.env (mode 600).
+
+  --newrelic                  Back-compat alias for --observability=newrelic.
+  --newrelic-key=KEY          Back-compat alias for --observability-key=KEY.
+
+EXAMPLES
+  sudo ./setup.sh
+  sudo ./setup.sh --observability=newrelic --observability-key=$NR_KEY
+  sudo ./setup.sh --force=traefik,firewall
+  sudo ./setup.sh --update
+  sudo ./setup.sh --report
+EOF
+}
 
 # Log functions
 _ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -239,20 +289,38 @@ confirm_ssh_keys_before_hardening() {
 #   --force=docker     force only the named step(s); comma-separated
 #   Valid step names: packages, docker, traefik, firewall, kernel, audit,
 #                     auto-updates, harden-docker, pam, aide, shm, fail2ban,
-#                     email, ntp, apparmor, ssh, mfa, bootloader, logrotate
+#                     email, ntp, apparmor, ssh, mfa, bootloader, logrotate,
+#                     observability
 run_full_setup() {
     log_info "Running full setup from repository scripts..."
     echo ""
 
-    # Parse --force / --force=steps
+    # Parse --force / --force=steps and observability flags
     local FORCE_ALL=false
     local FORCE_STEPS=""
+    local OBS_PROVIDER=""
+    local OBS_KEY=""
     for arg in "$@"; do
         case "$arg" in
             --force) FORCE_ALL=true ;;
             --force=*) FORCE_STEPS="${arg#*=}" ;;
+            --observability=*) OBS_PROVIDER="${arg#*=}" ;;
+            --observability-key=*) OBS_KEY="${arg#*=}" ;;
+            --newrelic) OBS_PROVIDER="newrelic" ;;
+            --newrelic-key=*) OBS_KEY="${arg#*=}" ;;
         esac
     done
+
+    # If a key was given but no provider, default to newrelic (back-compat
+    # with --newrelic-key=... alone). If a provider was given but no key,
+    # fail fast — observability install would error anyway.
+    if [[ -z "$OBS_PROVIDER" && -n "$OBS_KEY" ]]; then
+        OBS_PROVIDER="newrelic"
+    fi
+    if [[ -n "$OBS_PROVIDER" && -z "$OBS_KEY" ]]; then
+        log_error "--observability=$OBS_PROVIDER requires --observability-key=<key>"
+        exit 1
+    fi
 
     # Returns true if a given step name should be forced
     _step_forced() {
@@ -296,6 +364,20 @@ run_full_setup() {
         log_info "Configuring firewall..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" $(_flag firewall)
+    fi
+
+    # Install observability agent (opt-in, default OFF)
+    # Runs after firewall so the egress allowlist layers cleanly on top of ufw.
+    if [ -n "$OBS_PROVIDER" ] && [ -f "$DOCKERHOSTING_DIR/scripts/install-observability.sh" ]; then
+        log_info "Installing observability agent (provider: $OBS_PROVIDER)..."
+        local _obs_force
+        _obs_force="$(_flag observability)"
+        local -a _obs_args=(
+            --provider="$OBS_PROVIDER"
+            --observability-key="$OBS_KEY"
+        )
+        [ -n "$_obs_force" ] && _obs_args+=("$_obs_force")
+        bash "$DOCKERHOSTING_DIR/scripts/install-observability.sh" "${_obs_args[@]}"
     fi
 
     # Harden kernel parameters
@@ -455,6 +537,14 @@ run_full_setup() {
 
 # Main setup function
 main() {
+    # --help / -h: print usage and exit (no banner, no root check, no mutations)
+    for arg in "$@"; do
+        if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+            show_help
+            exit 0
+        fi
+    done
+
     display_banner
     check_root
 
@@ -465,6 +555,22 @@ main() {
             clone_repository
             log_info "Repository is up to date."
             exit 0
+        fi
+    done
+
+    # --report: run host audit report and exit (no setup, no mutations)
+    for arg in "$@"; do
+        if [[ "$arg" == "--report" ]]; then
+            local report_script="$DOCKERHOSTING_DIR/scripts/run-report.sh"
+            if [ ! -x "$report_script" ]; then
+                # Fall back to script alongside setup.sh when run from a checkout
+                report_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/run-report.sh"
+            fi
+            if [ ! -x "$report_script" ]; then
+                log_error "Audit report script not found or not executable"
+                exit 1
+            fi
+            exec bash "$report_script" "$@"
         fi
     done
 
@@ -512,6 +618,11 @@ main() {
     fi
     if [ -f "/etc/msmtprc" ]; then
         echo "  ✓ Email notifications configured"
+    fi
+    if [ -f "/etc/observability/provider" ]; then
+        local _obs_provider
+        _obs_provider="$(cat /etc/observability/provider 2> /dev/null || echo unknown)"
+        echo "  ✓ Observability agent: $_obs_provider (host-level singleton)"
     fi
     echo ""
     log_warn "REQUIRED: Log out and log back in to apply group changes"

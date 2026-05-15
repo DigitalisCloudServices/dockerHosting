@@ -170,3 +170,7 @@ _syntax_check() {
 @test "syntax: scripts/scan-image.sh" {
     _syntax_check "scripts/scan-image.sh"
 }
+
+@test "syntax: scripts/run-report.sh" {
+    _syntax_check "scripts/run-report.sh"
+}
