@@ -116,6 +116,187 @@ jobs:
       - name: Run lifecycle hook tests
         run: bats tests/test_lifecycle_hooks.bats
 
+  test-fail2ban:
+    name: Fail2ban tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          # Use the upstream bats-core package for v1.x features (tap output, --recursive)
+          sudo apt-get install -y bats || true
+          # Fallback: install from GitHub release if system package is too old
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run Fail2ban tests
+        run: bats tests/security/test_fail2ban.bats
+
+  test-harden-docker:
+    name: Harden Docker tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          # Use the upstream bats-core package for v1.x features (tap output, --recursive)
+          sudo apt-get install -y bats || true
+          # Fallback: install from GitHub release if system package is too old
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run Harden Docker tests
+        run: bats tests/security/test_harden_docker.bats
+
+  test-harden-kernel:
+    name: Harden Kernel tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          # Use the upstream bats-core package for v1.x features (tap output, --recursive)
+          sudo apt-get install -y bats || true
+          # Fallback: install from GitHub release if system package is too old
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run Harden Kernel tests
+        run: bats tests/security/test_harden_kernel.bats
+
+  test-install-packages:
+    name: Install packages tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          # Use the upstream bats-core package for v1.x features (tap output, --recursive)
+          sudo apt-get install -y bats || true
+          # Fallback: install from GitHub release if system package is too old
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run install packages tests
+        run: bats tests/test_install_packages.bats
+
+  test-scan-image:
+    name: Scan image tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          # Use the upstream bats-core package for v1.x features (tap output, --recursive)
+          sudo apt-get install -y bats || true
+          # Fallback: install from GitHub release if system package is too old
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run scan-image tests
+        run: bats tests/test_scan_image.bats
+
+  test-firewall:
+    name: Firewall tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats || true
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run firewall tests
+        run: bats tests/security/test_firewall.bats
+
+  test-run-report:
+    name: Run-report tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats || true
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run run-report tests
+        run: bats tests/test_run_report.bats
+
+  test-install-observability:
+    name: Install observability tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats || true
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run install-observability tests
+        run: bats tests/test_install_observability.bats
+
+  test-configure-observability-egress:
+    name: Configure observability egress tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats || true
+          if ! bats --version | grep -qP 'Bats [1-9]'; then
+            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
+              | tar -xz -C /tmp
+            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
+          fi
+
+      - name: Run configure-observability-egress tests
+        run: bats tests/test_configure_observability_egress.bats
+
   test-yaml:
     name: YAML validation
     runs-on: ubuntu-latest

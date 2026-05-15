@@ -7,6 +7,8 @@
 #                    pip install bashate
 
 .PHONY: help lint test test-traefik test-lib test-syntax test-args test-yaml test-pam test-hooks \
+        test-fail2ban test-harden-docker test-harden-kernel test-install-packages test-scan-image \
+        test-firewall test-run-report test-install-observability test-configure-observability-egress \
         test-format test-style test-security test-complexity test-unused test-docs test-permissions \
         format coverage ci test-all check-deps
 
@@ -38,6 +40,11 @@ help:
 	@echo "  make test-args         Run argument-validation tests"
 	@echo "  make test-pam          Run PAM policy tests"
 	@echo "  make test-hooks        Run lifecycle hook tests"
+	@echo "  make test-fail2ban     Run fail2ban tests"
+	@echo "  make test-harden-docker Run Docker hardening tests"
+	@echo "  make test-harden-kernel Run kernel hardening tests"
+	@echo "  make test-install-packages Run install-packages tests"
+	@echo "  make test-scan-image   Run image scanning tests"
 	@echo "  make test-yaml         Run YAML validation checks"
 	@echo ""
 	@echo "Code Quality:"
@@ -99,7 +106,7 @@ lint: check-deps
 # ── tests ────────────────────────────────────────────────────────────────────
 
 # Core test suite (required checks only)
-test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-yaml test-permissions
+test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
 	@echo "✓ All required tests passed"
 
 # Comprehensive test suite with optional quality checks
@@ -133,6 +140,42 @@ test-pam: check-deps
 test-hooks: check-deps
 	@echo "Running lifecycle hook tests..."
 	@bats tests/test_lifecycle_hooks.bats
+
+test-fail2ban: check-deps
+	@echo "Running fail2ban tests..."
+	@bats tests/security/test_fail2ban.bats
+
+test-harden-docker: check-deps
+	@echo "Running Docker hardening tests..."
+	@bats tests/security/test_harden_docker.bats
+
+test-harden-kernel: check-deps
+	@echo "Running kernel hardening tests..."
+	@bats tests/security/test_harden_kernel.bats
+
+test-install-packages: check-deps
+	@echo "Running install-packages tests..."
+	@bats tests/test_install_packages.bats
+
+test-scan-image: check-deps
+	@echo "Running image scanning tests..."
+	@bats tests/test_scan_image.bats
+
+test-firewall: check-deps
+	@echo "Running firewall tests..."
+	@bats tests/security/test_firewall.bats
+
+test-run-report: check-deps
+	@echo "Running run-report tests..."
+	@bats tests/test_run_report.bats
+
+test-install-observability: check-deps
+	@echo "Running install-observability tests..."
+	@bats tests/test_install_observability.bats
+
+test-configure-observability-egress: check-deps
+	@echo "Running configure-observability-egress tests..."
+	@bats tests/test_configure_observability_egress.bats
 
 test-yaml: check-deps
 	@echo "Running YAML validation..."

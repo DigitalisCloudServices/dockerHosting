@@ -74,7 +74,7 @@ assert_file_exists() {
 # assert_file_contains FILE TEXT — fails with diff if TEXT not found in FILE
 assert_file_contains() {
     local file="$1" text="$2"
-    if ! grep -qF "$text" "$file" 2>/dev/null; then
+    if ! grep -qF -- "$text" "$file" 2>/dev/null; then
         echo "Expected '$file' to contain: $text"
         echo "Actual content:"
         cat "$file" 2>/dev/null || echo "(file not found)"
@@ -85,7 +85,7 @@ assert_file_contains() {
 # refute_file_contains FILE TEXT — fails if TEXT IS found in FILE
 refute_file_contains() {
     local file="$1" text="$2"
-    if grep -qF "$text" "$file" 2>/dev/null; then
+    if grep -qF -- "$text" "$file" 2>/dev/null; then
         echo "Expected '$file' NOT to contain: $text"
         echo "Actual content:"
         cat "$file"
