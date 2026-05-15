@@ -43,14 +43,24 @@ if [[ "${UFW_DETACHED:-0}" != "1" ]] &&
     [[ "$NO_DETACH" == false ]] &&
     command -v systemd-run > /dev/null 2>&1; then
     UNIT="ufw-reconfig-$$"
+    LOGFILE="/var/log/${UNIT}.log"
     echo "[INFO] Detaching firewall reconfiguration as systemd unit: $UNIT"
-    echo "[INFO] If SSH stalls, reconnect and run: journalctl -u $UNIT -b"
+    echo "[INFO] Output is also captured at: $LOGFILE"
+    echo "[INFO] If SSH stalls, reconnect and run: cat $LOGFILE"
     exec systemd-run \
         --unit="$UNIT" \
         --collect \
         --setenv=UFW_DETACHED=1 \
+        --setenv=UFW_LOGFILE="$LOGFILE" \
         --pty --wait --quiet \
         "$0" "$@"
+fi
+
+# Inside the detached unit, tee everything to the log file so SSH death
+# can't hide the failure reason. --pty hands stdout/stderr to a tty owned
+# by the user session; the file gives us a stable, persistent copy.
+if [[ "${UFW_DETACHED:-0}" == "1" && -n "${UFW_LOGFILE:-}" ]]; then
+    exec > >(tee -a "$UFW_LOGFILE") 2>&1
 fi
 
 echo "[INFO] Configuring UFW firewall..."

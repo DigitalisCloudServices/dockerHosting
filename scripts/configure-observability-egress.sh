@@ -52,14 +52,24 @@ if [[ "${OBS_EGRESS_DETACHED:-0}" != "1" ]] &&
     [[ "$NO_DETACH" == false ]] &&
     command -v systemd-run > /dev/null 2>&1; then
     UNIT="obs-egress-reconfig-$$"
+    LOGFILE="/var/log/${UNIT}.log"
     echo "[INFO] Detaching reconfiguration as systemd unit: $UNIT"
-    echo "[INFO] If SSH stalls, reconnect and run: journalctl -u $UNIT -b"
+    echo "[INFO] Output is also captured at: $LOGFILE"
+    echo "[INFO] If SSH stalls, reconnect and run: cat $LOGFILE"
     exec systemd-run \
         --unit="$UNIT" \
         --collect \
         --setenv=OBS_EGRESS_DETACHED=1 \
+        --setenv=OBS_EGRESS_LOGFILE="$LOGFILE" \
         --pty --wait --quiet \
         "$0" "$@"
+fi
+
+# Inside the detached unit, tee output to the log file so SSH death cannot
+# hide the failure reason. --pty hands stdio to a tty owned by the user
+# session; the file gives us a stable, persistent copy.
+if [[ "${OBS_EGRESS_DETACHED:-0}" == "1" && -n "${OBS_EGRESS_LOGFILE:-}" ]]; then
+    exec > >(tee -a "$OBS_EGRESS_LOGFILE") 2>&1
 fi
 
 RED='\033[0;31m'
