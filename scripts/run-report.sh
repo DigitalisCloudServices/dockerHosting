@@ -5,7 +5,7 @@ export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # dockerHosting Audit Report
 #
 # Passive posture audit of the host. Emits a Markdown log and a JSON
-# sidecar under /var/log/dockerHosting/ aligned with:
+# sidecar under /var/log/dockerHosting/audit-reports/ aligned with:
 #   NIST SP 800-115 §3.1 documentation review
 #   NIST SP 800-115 §3.2 log review
 #   NIST SP 800-115 §3.3 ruleset review
@@ -33,7 +33,7 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC}  [$(_ts)] $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} [$(_ts)] $1"; }
 
 # Overridable for tests
-REPORT_DIR="${DOCKERHOSTING_REPORT_DIR:-/var/log/dockerHosting}"
+REPORT_DIR="${DOCKERHOSTING_REPORT_DIR:-/var/log/dockerHosting/audit-reports}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Runtime globals
@@ -466,8 +466,8 @@ _ensure_logrotate() {
     [ -f "$conf" ] && return 0
     [ -w /etc/logrotate.d ] || return 0
     cat > "$conf" << 'EOF'
-/var/log/dockerHosting/*.log
-/var/log/dockerHosting/*.log.json {
+/var/log/dockerHosting/audit-reports/*.log
+/var/log/dockerHosting/audit-reports/*.log.json {
     weekly
     rotate 12
     compress

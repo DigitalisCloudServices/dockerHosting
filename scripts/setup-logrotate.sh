@@ -98,13 +98,13 @@ else
 fi
 
 # Host-wide stanza for dockerHosting audit reports (idempotent).
-# Reports live under /var/log/dockerHosting/ and are written by run-report.sh.
+# Reports live under /var/log/dockerHosting/audit-reports/ and are written by run-report.sh.
 # Skip silently if /etc/logrotate.d is not writable (e.g. inside test sandbox).
 DH_AUDIT_CONF="/etc/logrotate.d/dockerHosting-audit"
 if [ ! -f "$DH_AUDIT_CONF" ] && [ -w /etc/logrotate.d ]; then
     cat > "$DH_AUDIT_CONF" << 'EOF'
-/var/log/dockerHosting/*.log
-/var/log/dockerHosting/*.log.json {
+/var/log/dockerHosting/audit-reports/*.log
+/var/log/dockerHosting/audit-reports/*.log.json {
     weekly
     rotate 12
     compress
