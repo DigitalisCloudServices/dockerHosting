@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Tracked pre-push hook for dockerHosting.
+# Activate with: make install-hooks  (sets core.hooksPath=.githooks)
+#
+# Budget: < 15s. CI runs the full bats suite (~8 min); pre-push only catches
+# the cheap-to-detect mistakes — shellcheck, syntax, yamllint. Skipping with
+# `git push --no-verify` is allowed but CI will still reject the PR.
+#
+# Override with: PRE_PUSH_FULL=1 git push  to run the full bats suite locally.
+
+set -e
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+echo "[pre-push] shellcheck on all scripts..."
+shellcheck --severity=warning \
+    setup.sh \
+    deploy-site.sh \
+    scripts/*.sh \
+    lib/*.sh
+
+echo "[pre-push] bats syntax + argument-validation + yaml..."
+bats tests/test_syntax.bats tests/test_arg_validation.bats tests/test_yaml.bats
+
+echo "[pre-push] yamllint..."
+yamllint -c .yamllint.yml \
+    templates/traefik/traefik.yml \
+    templates/traefik/middleware.yml \
+    .github/workflows/ci.yml
+sed 's/{{[A-Z_]*}}/placeholder/g' templates/traefik/site.yml.template \
+    | yamllint -c .yamllint.yml -
+
+if [[ "${PRE_PUSH_FULL:-0}" == "1" ]]; then
+    echo "[pre-push] PRE_PUSH_FULL=1 — running full bats suite (~8 min)..."
+    bats --recursive tests/
+fi
+
+echo "[pre-push] OK — full bats suite still runs blocking in CI."

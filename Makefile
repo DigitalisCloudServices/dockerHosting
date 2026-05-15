@@ -10,7 +10,7 @@
         test-fail2ban test-harden-docker test-harden-kernel test-install-packages test-scan-image \
         test-firewall test-run-report test-install-observability test-configure-observability-egress \
         test-format test-style test-security test-complexity test-unused test-docs test-permissions \
-        format coverage ci test-all check-deps
+        format coverage ci test-all check-deps install-hooks uninstall-hooks
 
 SHELL := /bin/bash
 
@@ -60,6 +60,8 @@ help:
 	@echo "  make format            Auto-format all scripts with shfmt"
 	@echo "  make coverage          Generate test coverage report (kcov)"
 	@echo "  make check-deps        Check required tools are installed"
+	@echo "  make install-hooks     Activate tracked .githooks/ (pre-commit + pre-push)"
+	@echo "  make uninstall-hooks   Restore default .git/hooks/ path"
 
 # ── dependency check ─────────────────────────────────────────────────────────
 
@@ -231,6 +233,18 @@ format:
 		|| { echo "ERROR: shfmt not found. Install: brew install shfmt"; exit 1; }
 	@shfmt -w -i 4 -ci -sr $(SCRIPTS)
 	@echo "✓ Formatted $(words $(SCRIPTS)) scripts"
+
+# ── git hooks ────────────────────────────────────────────────────────────────
+
+install-hooks:
+	@git config core.hooksPath .githooks
+	@echo "✓ git core.hooksPath set to .githooks"
+	@echo "  Active hooks:"
+	@ls -1 .githooks/ | sed 's/^/    /'
+
+uninstall-hooks:
+	@git config --unset core.hooksPath || true
+	@echo "✓ git core.hooksPath unset (default .git/hooks/ restored)"
 
 # ── coverage ─────────────────────────────────────────────────────────────────
 

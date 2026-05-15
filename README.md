@@ -1263,6 +1263,23 @@ When adding new features:
 4. Keep functions ≤30 lines; max nesting depth 3
 5. Add env-var overrides for any paths that tests need to redirect (see existing Traefik scripts as a pattern)
 
+### Activate the tracked git hooks (one-time, per clone)
+
+```sh
+make install-hooks
+```
+
+This points `core.hooksPath` at the tracked `.githooks/` directory:
+
+- **pre-commit** — runs `shellcheck`, syntax, and (if installed) `shfmt`/`bashate` on staged `.sh` files only. Fast.
+- **pre-push** — runs `shellcheck`, the fast bats subsets (`test_syntax`, `test_arg_validation`, `test_yaml`), and `yamllint`. ~7s.
+
+The full bats suite (~8 min) runs blocking in CI on every PR, so pre-push only catches the cheap-to-detect mistakes. Run the full suite locally with `make test` or `PRE_PUSH_FULL=1 git push` when you want extra confidence before pushing.
+
+Skip hooks for emergencies with `--no-verify`; CI will still gate the merge.
+
+Remove with `make uninstall-hooks`.
+
 ## License
 
 [Your License Here]

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Tracked pre-commit hook for dockerHosting.
+# Activate with: make install-hooks  (sets core.hooksPath=.githooks)
+#
+# Fast, staged-only checks. The slow gates (full bats, full shellcheck) live in
+# pre-push. Skip in emergencies with `git commit --no-verify` — but CI still
+# blocks PRs from merging if these fail.
+
+set -e
+
+STAGED_SH=$(git diff --cached --name-only --diff-filter=ACM | grep '\.sh$' || true)
+
+if [ -z "$STAGED_SH" ]; then
+    exit 0
+fi
+
+if ! command -v shellcheck &> /dev/null; then
+    echo "WARNING: shellcheck not found, skipping lint"
+else
+    echo "$STAGED_SH" | xargs shellcheck --severity=warning || {
+        echo "✗ Shellcheck failed. Fix errors or run 'git commit --no-verify' to skip."
+        exit 1
+    }
+fi
+
+for file in $STAGED_SH; do
+    bash -n "$file" || {
+        echo "✗ Syntax error in $file"
+        exit 1
+    }
+done
+
+if command -v shfmt &> /dev/null; then
+    echo "$STAGED_SH" | xargs shfmt -d -i 4 -ci -sr || {
+        echo "✗ Formatting issues found. Run 'make format' to fix."
+        exit 1
+    }
+fi
+
+if command -v bashate &> /dev/null; then
+    echo "$STAGED_SH" | xargs bashate --ignore E006,E010,E011 || {
+        echo "✗ Style check failed."
+        exit 1
+    }
+fi
+
+exit 0
