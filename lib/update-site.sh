@@ -660,12 +660,62 @@ for svc, cfg in config.get('services', {}).items():
 " "${artifact_name}" 2> /dev/null || true
 }
 
+# F474: wrap `docker compose up` invocations in a detect+recover loop.
+# Docker rejects a network with "Pool overlaps with other one on this address
+# space" when the requested /24 collides with an existing pool. Before F474
+# this hard-failed the install and forced a wizard re-entry; now we parse
+# the failing network name out of stderr, invoke the site's recover hook
+# (rewrites the offending DOCKER_SUBNET_* key in .env and clears half-created
+# project networks), and retry. Capped at 3 attempts so a genuinely bad host
+# state still surfaces.
+_dc_up_with_recover() {
+    local _max=3 _attempt=0 _rc _outfile _hook
+    _outfile="$(mktemp)"
+    _hook="${PROJECT_DIR}/infra/hooks/network-recover.sh"
+    while :; do
+        _attempt=$((_attempt + 1))
+        # tee preserves operator visibility; PIPESTATUS captures compose's rc.
+        set +e
+        docker compose -f "${PROJECT_DIR}/docker-compose.yml" up "$@" 2>&1 |
+            tee "${_outfile}"
+        _rc=${PIPESTATUS[0]}
+        set -e
+        if [[ "${_rc}" -eq 0 ]]; then
+            rm -f "${_outfile}"
+            return 0
+        fi
+        # Look for the recoverable failure pattern.
+        local _failed_net
+        _failed_net="$(grep -Eo 'failed to create network [^ :]+' "${_outfile}" |
+            head -n1 | awk '{print $NF}')"
+        if [[ -z "${_failed_net}" ]] || ! grep -qE 'Pool overlaps' "${_outfile}"; then
+            rm -f "${_outfile}"
+            return "${_rc}"
+        fi
+        if [[ "${_attempt}" -ge "${_max}" ]]; then
+            _warn "Network overlap retry cap reached (${_max}) — surfacing failure"
+            rm -f "${_outfile}"
+            return "${_rc}"
+        fi
+        if [[ ! -x "${_hook}" ]] && [[ ! -f "${_hook}" ]]; then
+            _warn "Recoverable overlap on '${_failed_net}' but ${_hook} missing — surfacing failure"
+            rm -f "${_outfile}"
+            return "${_rc}"
+        fi
+        _log "Recoverable network overlap on '${_failed_net}' (attempt ${_attempt}/${_max}) — invoking network-recover.sh"
+        bash "${_hook}" "${_failed_net}" ||
+            _fail "network-recover.sh failed for '${_failed_net}' — manual intervention required"
+        # Loop back and retry `docker compose up` with the same arguments.
+        : > "${_outfile}"
+    done
+}
+
 if [[ "${INFRA_STALE}" == "true" ]]; then
     _log "Infra updated — restarting all services"
-    docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d --force-recreate
+    _dc_up_with_recover -d --force-recreate
 elif [[ "${_force_full_up}" == "true" ]]; then
     _log "Bootstrap recovery — bringing up all services"
-    docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d
+    _dc_up_with_recover -d
 else
     STALE_SERVICES=()
     for _i in "${!ARTIFACT_NAMES[@]}"; do
@@ -677,7 +727,7 @@ else
     done
     if [[ ${#STALE_SERVICES[@]} -gt 0 ]]; then
         _log "Restarting stale services: ${STALE_SERVICES[*]}"
-        docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d --force-recreate "${STALE_SERVICES[@]}"
+        _dc_up_with_recover -d --force-recreate "${STALE_SERVICES[@]}"
     else
         _warn "No labeled services found for stale artifacts — check 'artifact:' labels in docker-compose.yml"
     fi
