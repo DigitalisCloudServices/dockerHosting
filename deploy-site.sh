@@ -32,6 +32,12 @@
 #   --ar-registry <host>     Artifact Registry hostname (default: europe-west2-docker.pkg.dev) [production only]
 #   --artifact-aes-key-file <path>          AES-256 key file for artifact decryption (base64) [production only]
 #   --artifact-signing-pub-key-file <path>  RSA public key file for artifact verification (PEM) [production only]
+#   --env-file <path>        Path to a KEY=VALUE file merged into .env after deploy-site's own
+#                            keys are written. Blank lines and lines starting with '#' are ignored.
+#                            Values overwrite anything already present in .env.
+#   --env-set KEY=VALUE      Set a single .env key. May be repeated. Wins over --env-file and any
+#                            existing .env value. Useful for re-running with the same flags but a
+#                            different password / one-off override.
 
 set -euo pipefail
 
@@ -100,6 +106,80 @@ _env_set() {
         sed -i "s|^${key}=.*|${key}=${value}|" "$file"
     else
         echo "${key}=${value}" >> "$file"
+    fi
+}
+
+# Validate a .env key: letters/digits/underscore, leading non-digit.
+_env_key_valid() {
+    [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+}
+
+# Merge a KEY=VALUE file into env_file via _env_set.
+# Blank lines and '#' comments ignored. Surrounding "..." or '...' on the value
+# is stripped. Invalid lines log a warning and are skipped.
+_apply_env_file() {
+    local file="$1" env_file="$2"
+    [[ -f "$file" ]] || {
+        log_error "--env-file not found: $file"
+        exit 1
+    }
+    local line key value lineno=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        lineno=$((lineno + 1))
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        if [[ "$line" != *=* ]]; then
+            log_warn "--env-file ${file}:${lineno}: skipping line without '=' — '${line}'"
+            continue
+        fi
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        if [[ "${#value}" -ge 2 ]]; then
+            if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+                value="${value:1:${#value}-2}"
+            elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+                value="${value:1:${#value}-2}"
+            fi
+        fi
+        if ! _env_key_valid "$key"; then
+            log_warn "--env-file ${file}:${lineno}: skipping invalid key '${key}'"
+            continue
+        fi
+        _env_set "$key" "$value" "$env_file"
+    done < "$file"
+}
+
+# Apply --env-set KEY=VALUE pairs from EXTRA_ENV_SETS to env_file.
+_apply_env_sets() {
+    local env_file="$1" kv key value
+    for kv in "${EXTRA_ENV_SETS[@]}"; do
+        if [[ "$kv" != *=* ]]; then
+            log_error "--env-set requires KEY=VALUE, got: '${kv}'"
+            exit 1
+        fi
+        key="${kv%%=*}"
+        value="${kv#*=}"
+        if ! _env_key_valid "$key"; then
+            log_error "--env-set: invalid key '${key}'"
+            exit 1
+        fi
+        _env_set "$key" "$value" "$env_file"
+    done
+}
+
+# Apply --env-file then --env-set so that CLI overrides win over file overrides,
+# which both win over what deploy-site wrote earlier in step 6.
+_apply_extra_envs() {
+    local env_file="$1"
+    if [[ -n "${EXTRA_ENV_FILE}" ]]; then
+        log_info "Merging --env-file: ${EXTRA_ENV_FILE}"
+        _apply_env_file "${EXTRA_ENV_FILE}" "${env_file}"
+    fi
+    if [[ "${#EXTRA_ENV_SETS[@]}" -gt 0 ]]; then
+        log_info "Applying ${#EXTRA_ENV_SETS[@]} --env-set override(s)"
+        _apply_env_sets "${env_file}"
     fi
 }
 
@@ -354,6 +434,8 @@ parse_args() {
     SETUP_LOGROTATE="yes"
     SETUP_TIMER="" # defaulted in apply_defaults based on mode
     FORCE_BOOTSTRAP=false
+    EXTRA_ENV_FILE=""
+    EXTRA_ENV_SETS=()
 
     if [[ $# -eq 0 ]]; then return 0; fi
 
@@ -426,6 +508,22 @@ parse_args() {
             --force)
                 FORCE_BOOTSTRAP=true
                 shift
+                ;;
+            --env-file)
+                if [[ -z "${2:-}" ]]; then
+                    log_error "--env-file requires a path argument"
+                    exit 1
+                fi
+                EXTRA_ENV_FILE="$2"
+                shift 2
+                ;;
+            --env-set)
+                if [[ -z "${2:-}" || "$2" != *=* ]]; then
+                    log_error "--env-set requires KEY=VALUE, got: '${2:-}'"
+                    exit 1
+                fi
+                EXTRA_ENV_SETS+=("$2")
+                shift 2
                 ;;
             --non-interactive)
                 NON_INTERACTIVE=true
@@ -593,6 +691,11 @@ main() {
         }
     fi
 
+    if [[ -n "$EXTRA_ENV_FILE" && ! -f "$EXTRA_ENV_FILE" ]]; then
+        log_error "--env-file not found: $EXTRA_ENV_FILE"
+        exit 1
+    fi
+
     # Kong port
     local suggested_port
     suggested_port=$(find_next_kong_port 8443)
@@ -657,8 +760,12 @@ main() {
         printf "    --gcs-key-file '%s' \\\\\n" "$GCS_KEY_FILE"
         if [[ -n "$ARTIFACT_AES_KEY_FILE" ]]; then printf "    --artifact-aes-key-file '%s' \\\\\n" "$ARTIFACT_AES_KEY_FILE"; fi
         if [[ -n "$ARTIFACT_SIGNING_PUB_KEY_FILE" ]]; then printf "    --artifact-signing-pub-key-file '%s' \\\\\n" "$ARTIFACT_SIGNING_PUB_KEY_FILE"; fi
+        if [[ -n "$EXTRA_ENV_FILE" ]]; then printf "    --env-file '%s' \\\\\n" "$EXTRA_ENV_FILE"; fi
+        for _kv in "${EXTRA_ENV_SETS[@]}"; do printf "    --env-set '%s' \\\\\n" "$_kv"; done
         printf "    --setup-timer '%s'\n" "$SETUP_TIMER"
     else
+        if [[ -n "$EXTRA_ENV_FILE" ]]; then printf "    --env-file '%s' \\\\\n" "$EXTRA_ENV_FILE"; fi
+        for _kv in "${EXTRA_ENV_SETS[@]}"; do printf "    --env-set '%s' \\\\\n" "$_kv"; done
         printf "    --setup-logrotate '%s'\n" "$SETUP_LOGROTATE"
     fi
     echo ""
@@ -924,6 +1031,8 @@ main() {
         _env_set "INFRA_ENCRYPTED" "$INFRA_ENCRYPTED" "$env_file"
         _env_set "INFRA_ARTIFACT" "./artifact-cache/${INFRA_ARTIFACT}" "$env_file"
 
+        _apply_extra_envs "$env_file"
+
         log_info "Running initial artifact download and stack start..."
         local update_site="${SCRIPT_DIR}/lib/update-site.sh"
         [[ -f "${update_site}" ]] || {
@@ -940,6 +1049,8 @@ main() {
                 exit 1
             }
 
+        _defined_n=$(docker compose -f "${DEPLOY_DIR}/docker-compose.yml" config --services 2> /dev/null | grep -c . || true)
+        _running_n=$(docker compose -f "${DEPLOY_DIR}/docker-compose.yml" ps --services --status running 2> /dev/null | grep -c . || true)
         _bad=$(docker compose -f "${DEPLOY_DIR}/docker-compose.yml" ps --format json 2> /dev/null |
             python3 -c "
 import json, sys
@@ -956,8 +1067,22 @@ for line in sys.stdin:
     except: pass
 print(' '.join(bad))
 " 2> /dev/null || true)
-        [[ -n "${_bad}" ]] && log_warn "Post-deploy health check: these services are not running/healthy: ${_bad}"
+        DEPLOY_STACK_OK=true
+        if [[ "${_defined_n}" == "0" ]]; then
+            log_error "Post-deploy health check: docker-compose.yml defines no services — stack not verifiable"
+            DEPLOY_STACK_OK=false
+        elif [[ "${_running_n}" == "0" ]]; then
+            log_error "Post-deploy health check: NO services are running (expected ${_defined_n}) — stack failed to start"
+            DEPLOY_STACK_OK=false
+        elif [[ "${_running_n}" -lt "${_defined_n}" ]]; then
+            log_error "Post-deploy health check: only ${_running_n}/${_defined_n} services running (bad: ${_bad})"
+            DEPLOY_STACK_OK=false
+        elif [[ -n "${_bad}" ]]; then
+            log_warn "Post-deploy health check: these services are not running/healthy: ${_bad}"
+            DEPLOY_STACK_OK=false
+        fi
     else
+        _apply_extra_envs "$env_file"
         log_info ".env written with infrastructure settings"
         log_note "Copy site files to ${DEPLOY_DIR}/, then run: sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap"
     fi
@@ -1005,7 +1130,7 @@ print(' '.join(bad))
     log_step "8/8  Log rotation + systemd updater timer"
 
     if [[ "$SETUP_LOGROTATE" == "yes" && -f "$SCRIPT_DIR/scripts/setup-logrotate.sh" ]]; then
-        bash "$SCRIPT_DIR/scripts/setup-logrotate.sh" "$SITE_NAME" "$DEPLOY_DIR"
+        bash "$SCRIPT_DIR/scripts/setup-logrotate.sh" "$SITE_NAME" "$DEPLOY_DIR" "$SITE_USER"
     fi
 
     if [[ "$SETUP_TIMER" == "yes" ]]; then
@@ -1040,13 +1165,19 @@ print(' '.join(bad))
         echo "  2. Edit .env:   ${DEPLOY_DIR}/.env  (add app secrets as needed)"
         echo "  3. Start:       sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap"
     else
-        echo "  1. Stack is running — update-site.sh downloaded artifacts and started services"
+        if [[ "${DEPLOY_STACK_OK:-true}" == "true" ]]; then
+            echo "  1. Stack is running — update-site.sh downloaded artifacts and started services"
+        else
+            echo "  1. *** Stack is NOT fully running — review the health-check errors above and"
+            echo "         run: sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap --force"
+        fi
         echo "  2. Review .env: ${DEPLOY_DIR}/.env"
         if [[ "$SETUP_TIMER" == "yes" ]]; then
             echo "  3. Updates:     ${DEPLOY_DIR}/bin/update-now  (timer also runs every 15 min)"
         fi
     fi
     echo ""
+    [[ "${DEPLOY_STACK_OK:-true}" == "true" ]] || exit 1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

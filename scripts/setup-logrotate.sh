@@ -4,16 +4,21 @@ export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #############################################
 # Setup log rotation for a site
 #
-# Usage: ./setup-logrotate.sh <site_name> <deploy_dir>
+# Usage: ./setup-logrotate.sh <site_name> <deploy_dir> [site_user]
+#
+# site_user is the system user/group that owns rotated log files. Defaults to
+# site_name for backwards compatibility, but deploy-site.sh passes the real
+# SITE_USER (which often differs from SITE_NAME, e.g. "vela1" vs "velaair").
 #############################################
 
 set -e
 
 SITE_NAME="$1"
 DEPLOY_DIR="$2"
+SITE_USER="${3:-$SITE_NAME}"
 
 if [ -z "$SITE_NAME" ]; then
-    echo "[ERROR] Usage: $0 <site_name> <deploy_dir>"
+    echo "[ERROR] Usage: $0 <site_name> <deploy_dir> [site_user]"
     exit 1
 fi
 
@@ -32,6 +37,7 @@ if [ -f "$TEMPLATE_DIR/logrotate.conf.template" ]; then
     # Replace placeholders in template
     sed -e "s|{{SITE_NAME}}|$SITE_NAME|g" \
         -e "s|{{DEPLOY_DIR}}|$DEPLOY_DIR|g" \
+        -e "s|{{SITE_USER}}|$SITE_USER|g" \
         "$TEMPLATE_DIR/logrotate.conf.template" > "$LOGROTATE_CONFIG"
 else
     echo "[INFO] Creating default logrotate configuration"
@@ -48,7 +54,7 @@ $DEPLOY_DIR/logs/*.log {
     delaycompress
     missingok
     notifempty
-    create 0640 $SITE_NAME $SITE_NAME
+    create 0640 $SITE_USER $SITE_USER
     sharedscripts
     postrotate
         # Reload services if needed
@@ -64,7 +70,7 @@ $DEPLOY_DIR/nginx/logs/*.log {
     delaycompress
     missingok
     notifempty
-    create 0640 $SITE_NAME $SITE_NAME
+    create 0640 $SITE_USER $SITE_USER
     sharedscripts
     postrotate
         # Reload nginx if present
@@ -80,7 +86,7 @@ $DEPLOY_DIR/nginx/logs/*.log {
     delaycompress
     missingok
     notifempty
-    create 0640 $SITE_NAME $SITE_NAME
+    create 0640 $SITE_USER $SITE_USER
 }
 EOF
 fi

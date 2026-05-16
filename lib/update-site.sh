@@ -294,12 +294,31 @@ for _i in "${!ARTIFACT_STALE[@]}"; do
     [[ "${ARTIFACT_STALE[$_i]}" == "true" ]] && _any_stale=true
 done
 
-# Auto-detect fresh bootstrap: if no containers exist, force hooks to run
-if [[ "${_any_stale}" == "false" && "${TRIGGER}" == "bootstrap" ]]; then
-    if ! docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --services 2> /dev/null | grep -q .; then
-        _log "Fresh deployment detected (no containers exist) — forcing bootstrap hooks"
-        ALWAYS_RUN_HOOKS=true
-    fi
+# Return 0 iff every service declared in docker-compose.yml is currently 'running'.
+# Used on bootstrap to recover from a prior failed attempt that left .env hashes
+# matching the channel but the stack not actually up.
+_stack_fully_running() {
+    local compose_file="${PROJECT_DIR}/docker-compose.yml"
+    [[ -f "${compose_file}" ]] || return 1
+    local defined running svc
+    defined=$(docker compose -f "${compose_file}" config --services 2> /dev/null)
+    [[ -z "${defined}" ]] && return 1
+    running=$(docker compose -f "${compose_file}" ps --services --status running 2> /dev/null)
+    while IFS= read -r svc; do
+        [[ -z "${svc}" ]] && continue
+        grep -Fxq -- "${svc}" <<< "${running}" || return 1
+    done <<< "${defined}"
+    return 0
+}
+
+# Auto-detect partial/fresh deployment on bootstrap: if any defined service isn't
+# running, force a full pull+up cycle even when no artifact is stale. Recovers
+# from a prior bootstrap that left .env hashes current but the stack missing.
+_force_full_up=false
+if [[ "${TRIGGER}" == "bootstrap" ]] && ! _stack_fully_running; then
+    _log "Bootstrap: stack not fully running — forcing pull and up"
+    ALWAYS_RUN_HOOKS=true
+    _force_full_up=true
 fi
 
 if [[ "${_any_stale}" == "false" && "${ALWAYS_RUN_HOOKS}" != "true" ]]; then
@@ -307,7 +326,7 @@ if [[ "${_any_stale}" == "false" && "${ALWAYS_RUN_HOOKS}" != "true" ]]; then
     exit 0
 fi
 
-if [[ "${_any_stale}" == "false" && "${ALWAYS_RUN_HOOKS}" == "true" ]]; then
+if [[ "${_any_stale}" == "false" && "${ALWAYS_RUN_HOOKS}" == "true" && "${_force_full_up}" != "true" ]]; then
     _log "All artifacts up to date — running hooks only (--always-run-hooks)."
     _run_hooks "pre-start"
     _run_hooks "post-start"
@@ -644,6 +663,9 @@ for svc, cfg in config.get('services', {}).items():
 if [[ "${INFRA_STALE}" == "true" ]]; then
     _log "Infra updated — restarting all services"
     docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d --force-recreate
+elif [[ "${_force_full_up}" == "true" ]]; then
+    _log "Bootstrap recovery — bringing up all services"
+    docker compose -f "${PROJECT_DIR}/docker-compose.yml" up -d
 else
     STALE_SERVICES=()
     for _i in "${!ARTIFACT_NAMES[@]}"; do

@@ -9,7 +9,7 @@
     delaycompress
     missingok
     notifempty
-    create 0640 {{SITE_NAME}} {{SITE_NAME}}
+    create 0640 {{SITE_USER}} {{SITE_USER}}
     sharedscripts
     postrotate
         # Reload services if needed
@@ -25,7 +25,7 @@
     delaycompress
     missingok
     notifempty
-    create 0640 {{SITE_NAME}} {{SITE_NAME}}
+    create 0640 {{SITE_USER}} {{SITE_USER}}
     sharedscripts
     postrotate
         # Reload nginx container
@@ -41,7 +41,7 @@
     delaycompress
     missingok
     notifempty
-    create 0640 {{SITE_NAME}} {{SITE_NAME}}
+    create 0640 {{SITE_USER}} {{SITE_USER}}
 }
 
 # Docker container logs (if using json-file driver)

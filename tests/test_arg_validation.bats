@@ -134,3 +134,81 @@ DEPLOY_SITE="$REPO_ROOT/deploy-site.sh"
     run bash -c "source '$DEPLOY_SITE'; parse_args --site-name mysite --mode development"
     [ "$status" -eq 0 ]
 }
+
+@test "deploy-site: parse_args accepts repeated --env-set into EXTRA_ENV_SETS" {
+    run bash -c "source '$DEPLOY_SITE'; parse_args --site-name mysite --mode development --env-set FOO=bar --env-set BAZ=qux; echo \"len=\${#EXTRA_ENV_SETS[@]} first=\${EXTRA_ENV_SETS[0]} second=\${EXTRA_ENV_SETS[1]}\""
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"len=2"* ]]
+    [[ "$output" == *"first=FOO=bar"* ]]
+    [[ "$output" == *"second=BAZ=qux"* ]]
+}
+
+@test "deploy-site: parse_args rejects --env-set without '=' in value" {
+    run bash -c "source '$DEPLOY_SITE'; parse_args --site-name mysite --mode development --env-set FOO"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"env-set"* ]]
+}
+
+@test "deploy-site: parse_args rejects --env-set with no following arg" {
+    run bash -c "source '$DEPLOY_SITE'; parse_args --site-name mysite --mode development --env-set"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"env-set"* ]]
+}
+
+@test "deploy-site: parse_args accepts --env-file path" {
+    run bash -c "source '$DEPLOY_SITE'; parse_args --site-name mysite --mode development --env-file /tmp/some-env-file; echo \"file=\$EXTRA_ENV_FILE\""
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"file=/tmp/some-env-file"* ]]
+}
+
+@test "deploy-site: parse_args rejects --env-file with no following arg" {
+    run bash -c "source '$DEPLOY_SITE'; parse_args --site-name mysite --mode development --env-file"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"env-file"* ]]
+}
+
+# ── deploy-site.sh _apply_env_file ───────────────────────────────────────────
+# Exercise the merge helper in isolation against a tmp .env target.
+
+@test "deploy-site: _apply_env_file merges KEY=VALUE lines, ignores comments/blanks, strips quotes" {
+    tmpdir="$(mktemp -d)"
+    src="$tmpdir/overrides.env"
+    target="$tmpdir/.env"
+    cat > "$src" <<'EOF'
+# top comment
+FOO=bar
+BAZ="quoted value"
+
+  PADDED_KEY=untouched-value
+EOF
+    : > "$target"
+    run bash -c "source '$DEPLOY_SITE'; _apply_env_file '$src' '$target'; cat '$target'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"FOO=bar"* ]]
+    [[ "$output" == *"BAZ=quoted value"* ]]
+    [[ "$output" == *"PADDED_KEY=untouched-value"* ]]
+    [[ "$output" != *"top comment"* ]]
+    rm -rf "$tmpdir"
+}
+
+@test "deploy-site: _apply_env_file overwrites existing keys in target" {
+    # _env_set uses GNU sed -i; skip on BSD sed hosts (e.g. macOS dev machines).
+    # Target deployment hosts (Debian) have GNU sed and exercise this path in production.
+    [[ "$(uname)" == "Linux" ]] || skip "GNU sed required (preexisting _env_set behaviour)"
+    tmpdir="$(mktemp -d)"
+    src="$tmpdir/overrides.env"
+    target="$tmpdir/.env"
+    echo "FOO=original" > "$target"
+    echo "FOO=replaced" > "$src"
+    run bash -c "source '$DEPLOY_SITE'; _apply_env_file '$src' '$target'; cat '$target'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"FOO=replaced"* ]]
+    [[ "$output" != *"FOO=original"* ]]
+    rm -rf "$tmpdir"
+}
+
+@test "deploy-site: _apply_env_file errors if file is missing" {
+    run bash -c "source '$DEPLOY_SITE'; _apply_env_file /nonexistent/path /tmp/.env-irrelevant"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not found"* ]]
+}
