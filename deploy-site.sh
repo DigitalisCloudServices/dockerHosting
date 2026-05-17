@@ -917,7 +917,7 @@ main() {
         local gen_env="${DEPLOY_DIR}/infra/scripts/generate-env.sh"
         if [[ -f "${gen_env}" ]]; then
             log_info "Generating application secrets..."
-            bash "${gen_env}"
+            DEPLOY_DIR="${DEPLOY_DIR}" bash "${gen_env}"
         else
             log_warn "generate-env.sh not found at ${gen_env} — run it manually before starting the stack"
         fi
