@@ -930,6 +930,22 @@ main() {
         mkdir -p "${DEPLOY_DIR}/infra/secrets"
         mkdir -p "${DEPLOY_DIR}/bin"
 
+        # F491: Copy artifact crypto keys to infra/secrets/ unconditionally — this must
+        # happen in all modes (including development) so secrets-provision.sh can read
+        # them directly from files rather than requiring .env embedding.  The copy inside
+        # the INFRA_ENCRYPTED block above is retained for the pre-decryption ordering
+        # requirement in production mode; this copy covers development mode.
+        if [[ -n "${ARTIFACT_AES_KEY_FILE}" && -f "${ARTIFACT_AES_KEY_FILE}" ]]; then
+            cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
+            chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
+            log_info "AES key      → infra/secrets/artifact_aes_key.txt"
+        fi
+        if [[ -n "${ARTIFACT_SIGNING_PUB_KEY_FILE}" && -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
+            cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+            chmod 644 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+            log_info "Signing key  → infra/secrets/artifact_signing_public_key.pem"
+        fi
+
         log_info "Skeleton created at ${DEPLOY_DIR}"
         log_note "Copy your docker-compose.yml and config directories into ${DEPLOY_DIR}/"
         log_note "Then run: sudo ${SCRIPT_DIR}/lib/update-site.sh ${DEPLOY_DIR} --trigger bootstrap"
