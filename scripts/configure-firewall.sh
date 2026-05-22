@@ -41,7 +41,8 @@ done
 # and inspect with `journalctl -u <unit> -b` (the unit name is printed below).
 if [[ "${UFW_DETACHED:-0}" != "1" ]] &&
     [[ "$NO_DETACH" == false ]] &&
-    command -v systemd-run > /dev/null 2>&1; then
+    command -v systemd-run > /dev/null 2>&1 &&
+    [[ -S /run/dbus/system_bus_socket ]]; then
     UNIT="ufw-reconfig-$$"
     LOGFILE="/var/log/${UNIT}.log"
     echo "[INFO] Detaching firewall reconfiguration as systemd unit: $UNIT"

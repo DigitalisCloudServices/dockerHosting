@@ -39,10 +39,62 @@ if docker network ls | grep -q "$NETWORK_NAME"; then
     exit 0
 fi
 
+# Find a free /24 subnet using Python's ipaddress module for proper overlap detection.
+# Uses 192.168.100.0/24 – 192.168.254.0/24 (outside Docker's default 172.17-31 pool and
+# well above the common home/office LAN ranges 192.168.0-10.x).
+# Start offset is deterministic from site name so the same site always tries the same
+# subnet first, reducing churn on re-deploys.
+SELECTED_SUBNET="$(
+    python3 - "$SITE_NAME" << 'PYEOF'
+import sys, subprocess, json, hashlib
+from ipaddress import ip_network
+
+site_name = sys.argv[1]
+
+# Collect all subnets currently in use by any Docker network
+result = subprocess.run(['docker', 'network', 'ls', '-q'], capture_output=True, text=True)
+net_ids = result.stdout.strip().split()
+existing = []
+for nid in net_ids:
+    r = subprocess.run(['docker', 'network', 'inspect', nid], capture_output=True, text=True)
+    try:
+        for net in json.loads(r.stdout):
+            for cfg in net.get('IPAM', {}).get('Config', []):
+                s = cfg.get('Subnet')
+                if s:
+                    try:
+                        existing.append(ip_network(s, strict=False))
+                    except ValueError:
+                        pass
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+
+# Deterministic start index: 0–154, based on site name hash
+start = int(hashlib.md5(site_name.encode()).hexdigest()[:2], 16) % 155  # 0..154
+
+for i in range(155):
+    third_octet = (start + i) % 155 + 100  # 100..254
+    candidate = ip_network(f'192.168.{third_octet}.0/24')
+    if not any(candidate.overlaps(e) for e in existing):
+        print(f'192.168.{third_octet}.0/24')
+        sys.exit(0)
+
+print('[ERROR] No free subnet found in 192.168.100-254.0/24 — all 155 candidates overlap existing networks', file=sys.stderr)
+sys.exit(1)
+PYEOF
+)"
+
+if [ -z "$SELECTED_SUBNET" ]; then
+    echo "[ERROR] Failed to select a free subnet"
+    exit 1
+fi
+
+echo "[INFO] Selected subnet: $SELECTED_SUBNET (verified free via ipaddress overlap check)"
+
 # Create isolated bridge network for the site
 docker network create \
     --driver bridge \
-    --subnet "172.$(shuf -i 16-31 -n 1).$(shuf -i 0-255 -n 1).0/24" \
+    --subnet "$SELECTED_SUBNET" \
     --opt "com.docker.network.bridge.name=${BRIDGE_NAME}" \
     --opt "com.docker.network.bridge.enable_icc=false" \
     --opt "com.docker.network.bridge.enable_ip_masquerade=true" \
@@ -59,6 +111,7 @@ cat > "${REGISTRY_FILE}" << EOF
 site_name=${SITE_NAME}
 network_name=${NETWORK_NAME}
 bridge_name=${BRIDGE_NAME}
+subnet=${SELECTED_SUBNET}
 bridge_hash=${BRIDGE_HASH}
 created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF

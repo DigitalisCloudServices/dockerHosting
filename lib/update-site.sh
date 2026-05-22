@@ -84,7 +84,11 @@ done
 ARTIFACT_CACHE="${PROJECT_DIR}/artifact-cache"
 DECRYPT_SH="${SCRIPT_DIR}/decrypt.sh"
 DOTENV="${PROJECT_DIR}/.env"
-GCS_KEY_FILE="${PROJECT_DIR}/infra/secrets/gcs_service_account.json"
+GCS_KEY_FILE="${PROJECT_DIR}/secrets/gcs_service_account.json"
+
+# Export COMPOSE_DIR so lifecycle hooks resolve relative paths against the
+# deploy directory rather than their own (possibly symlinked) script location.
+export COMPOSE_DIR="${PROJECT_DIR}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -160,7 +164,7 @@ for h in json.load(sys.stdin):
         local f="${PROJECT_DIR}/${s}"
         if [[ -f "${f}" ]]; then
             _log "Hook [${TRIGGER}/${phase}]: ${s}"
-            bash "${f}" || _fail "Hook failed: ${s}"
+            bash "${f}" < /dev/null || _fail "Hook failed: ${s}"
         else
             _warn "Hook not found (skipping): ${f}"
         fi
@@ -460,8 +464,8 @@ PYEOF
             "${download_url}"
 
         _log "${type}: verifying and decrypting ${artifact_basename}..."
-        local pub_key_file="${PROJECT_DIR}/infra/secrets/artifact_signing_public_key.pem"
-        local aes_key_file="${PROJECT_DIR}/infra/secrets/artifact_aes_key.txt"
+        local pub_key_file="${PROJECT_DIR}/secrets/artifact_signing_public_key.pem"
+        local aes_key_file="${PROJECT_DIR}/secrets/artifact_aes_key.txt"
 
         if [[ "${encrypted}" == "true" && "${signed}" == "true" ]]; then
             if [[ -f "${pub_key_file}" && -f "${aes_key_file}" ]]; then
@@ -640,13 +644,13 @@ else
 fi
 
 _log "Pulling container images..."
-docker compose -f "${PROJECT_DIR}/docker-compose.yml" pull --quiet --ignore-pull-failures
+docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" pull --quiet --ignore-pull-failures
 
 # Return all service names whose `artifact` label matches the given artifact name.
 # Requires Docker Compose v2.15+ for --format json.
 _services_for_artifact() {
     local artifact_name="$1"
-    docker compose -f "${PROJECT_DIR}/docker-compose.yml" config --format json 2> /dev/null |
+    docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" config --format json 2> /dev/null |
         python3 -c "
 import json, sys
 config = json.load(sys.stdin)
@@ -676,7 +680,7 @@ _dc_up_with_recover() {
         _attempt=$((_attempt + 1))
         # tee preserves operator visibility; PIPESTATUS captures compose's rc.
         set +e
-        docker compose -f "${PROJECT_DIR}/docker-compose.yml" up "$@" 2>&1 |
+        docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" up "$@" 2>&1 |
             tee "${_outfile}"
         _rc=${PIPESTATUS[0]}
         set -e
@@ -737,9 +741,9 @@ fi
 _run_hooks "post-start"
 
 _log "Update complete in $(($(date +%s) - _START_TS))s."
-docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps
+docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" ps
 
-_unhealthy=$(docker compose -f "${PROJECT_DIR}/docker-compose.yml" ps --format json 2> /dev/null |
+_unhealthy=$(docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" ps --format json 2> /dev/null |
     python3 -c "
 import json, sys
 bad = []

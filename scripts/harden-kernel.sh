@@ -173,9 +173,11 @@ EOF
 
 echo "[INFO] Created sysctl security configuration: /etc/sysctl.d/99-security.conf"
 
-# Apply sysctl settings
+# Apply sysctl settings (individual key failures are non-fatal; containers
+# and some hardened kernels deny certain parameters — the config is still
+# written and applied at next boot via sysctl.d)
 echo "[INFO] Applying sysctl settings..."
-sysctl -p /etc/sysctl.d/99-security.conf
+sysctl -p /etc/sysctl.d/99-security.conf || true
 
 # Verify critical settings
 echo ""

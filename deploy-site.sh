@@ -842,7 +842,7 @@ main() {
 
         mkdir -p "${DEPLOY_DIR}"
         mkdir -p "${DEPLOY_DIR}/artifact-cache"
-        mkdir -p "${DEPLOY_DIR}/infra/secrets"
+        mkdir -p "${DEPLOY_DIR}/secrets"
 
         if [[ "${INFRA_IS_LOCAL}" == "true" ]]; then
             # Local directory mode - copy from existing filesystem location
@@ -889,23 +889,23 @@ main() {
 
                 # Copy crypto keys to secrets directory before decryption
                 if [[ -n "${ARTIFACT_AES_KEY_FILE}" && -f "${ARTIFACT_AES_KEY_FILE}" ]]; then
-                    cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-                    chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-                    chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
+                    cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
+                    chmod 600 "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
+                    chown root:root "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
                 fi
                 if [[ -n "${ARTIFACT_SIGNING_PUB_KEY_FILE}" && -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
-                    cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-                    chmod 644 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-                    chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
+                    cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
+                    chmod 644 "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
+                    chown root:root "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
                 fi
 
                 log_info "Verifying and decrypting infra artifact..."
                 decrypt_artifact "${infra_tmp}" "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" \
-                    "${decrypt_bootstrap}" "${DEPLOY_DIR}/infra/secrets" "${INFRA_SIGNED}" "${INFRA_ENCRYPTED}"
+                    "${decrypt_bootstrap}" "${DEPLOY_DIR}/secrets" "${INFRA_SIGNED}" "${INFRA_ENCRYPTED}"
             else
                 log_info "Staging infra artifact (unsigned, unencrypted)..."
                 decrypt_artifact "${infra_tmp}" "${DEPLOY_DIR}/artifact-cache/${INFRA_ARTIFACT}" \
-                    "${decrypt_bootstrap}" "${DEPLOY_DIR}/infra/secrets" "false" "false"
+                    "${decrypt_bootstrap}" "${DEPLOY_DIR}/secrets" "false" "false"
             fi
 
             log_info "Extracting infra artifact to ${DEPLOY_DIR}..."
@@ -927,23 +927,23 @@ main() {
         mkdir -p "${DEPLOY_DIR}"
         mkdir -p "${DEPLOY_DIR}/artifact-cache"
         mkdir -p "${DEPLOY_DIR}/infra"
-        mkdir -p "${DEPLOY_DIR}/infra/secrets"
+        mkdir -p "${DEPLOY_DIR}/secrets"
         mkdir -p "${DEPLOY_DIR}/bin"
 
-        # F491: Copy artifact crypto keys to infra/secrets/ unconditionally — this must
+        # F491: Copy artifact crypto keys to secrets/ unconditionally — this must
         # happen in all modes (including development) so secrets-provision.sh can read
         # them directly from files rather than requiring .env embedding.  The copy inside
         # the INFRA_ENCRYPTED block above is retained for the pre-decryption ordering
         # requirement in production mode; this copy covers development mode.
         if [[ -n "${ARTIFACT_AES_KEY_FILE}" && -f "${ARTIFACT_AES_KEY_FILE}" ]]; then
-            cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-            chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-            log_info "AES key      → infra/secrets/artifact_aes_key.txt"
+            cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
+            chmod 600 "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
+            log_info "AES key      → secrets/artifact_aes_key.txt"
         fi
         if [[ -n "${ARTIFACT_SIGNING_PUB_KEY_FILE}" && -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
-            cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-            chmod 644 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-            log_info "Signing key  → infra/secrets/artifact_signing_public_key.pem"
+            cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
+            chmod 644 "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
+            log_info "Signing key  → secrets/artifact_signing_public_key.pem"
         fi
 
         log_info "Skeleton created at ${DEPLOY_DIR}"
@@ -960,11 +960,11 @@ main() {
 
     chown root:root "${DEPLOY_DIR}/artifact-cache"
     chmod 755 "${DEPLOY_DIR}/artifact-cache"
-    chown root:root "${DEPLOY_DIR}/infra/secrets"
-    chmod 700 "${DEPLOY_DIR}/infra/secrets"
+    chown root:root "${DEPLOY_DIR}/secrets"
+    chmod 700 "${DEPLOY_DIR}/secrets"
 
     log_info "artifact-cache: 755 root:root"
-    log_info "infra/secrets:  700 root:root"
+    log_info "secrets:  700 root:root"
 
     if [[ -f "$SCRIPT_DIR/scripts/setup-docker-permissions.sh" ]]; then
         bash "$SCRIPT_DIR/scripts/setup-docker-permissions.sh" "$SITE_USER" "$DEPLOY_DIR"
@@ -983,27 +983,27 @@ main() {
     if [[ "$DEPLOY_MODE" == "production" ]]; then
         log_step "5/8  GCS service account key + crypto keys"
 
-        local gcs_dest="${DEPLOY_DIR}/infra/secrets/gcs_service_account.json"
+        local gcs_dest="${DEPLOY_DIR}/secrets/gcs_service_account.json"
         cp "$GCS_KEY_FILE" "$gcs_dest"
         chmod 600 "$gcs_dest"
         chown root:root "$gcs_dest"
-        log_info "GCS key → infra/secrets/gcs_service_account.json"
+        log_info "GCS key → secrets/gcs_service_account.json"
 
         # Crypto keys already copied in Step 3 for infra decryption; ensure they're in place
         if [[ -n "${ARTIFACT_AES_KEY_FILE}" && -f "${ARTIFACT_AES_KEY_FILE}" ]]; then
-            if [[ ! -f "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt" ]]; then
-                cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-                chmod 600 "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-                chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_aes_key.txt"
-                log_info "AES key      → infra/secrets/artifact_aes_key.txt"
+            if [[ ! -f "${DEPLOY_DIR}/secrets/artifact_aes_key.txt" ]]; then
+                cp "${ARTIFACT_AES_KEY_FILE}" "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
+                chmod 600 "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
+                chown root:root "${DEPLOY_DIR}/secrets/artifact_aes_key.txt"
+                log_info "AES key      → secrets/artifact_aes_key.txt"
             fi
         fi
         if [[ -n "${ARTIFACT_SIGNING_PUB_KEY_FILE}" && -f "${ARTIFACT_SIGNING_PUB_KEY_FILE}" ]]; then
-            if [[ ! -f "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem" ]]; then
-                cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-                chmod 644 "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-                chown root:root "${DEPLOY_DIR}/infra/secrets/artifact_signing_public_key.pem"
-                log_info "Signing key  → infra/secrets/artifact_signing_public_key.pem"
+            if [[ ! -f "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem" ]]; then
+                cp "${ARTIFACT_SIGNING_PUB_KEY_FILE}" "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
+                chmod 644 "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
+                chown root:root "${DEPLOY_DIR}/secrets/artifact_signing_public_key.pem"
+                log_info "Signing key  → secrets/artifact_signing_public_key.pem"
             fi
         fi
 

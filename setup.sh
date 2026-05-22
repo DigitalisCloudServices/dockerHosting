@@ -57,6 +57,10 @@ OPTIONS
                                 audit, auto-updates, harden-docker, apparmor, pam,
                                 aide, shm, fail2ban, email, bootloader, usb, ssh,
                                 mfa, observability
+  --skip=step1,step2,...      Skip the named step(s) entirely. Uses the same step
+                                names as --force. Useful for container environments
+                                where host-level steps (ntp, apparmor, bootloader,
+                                usb, ssh, mfa) do not apply.
 
 Optional observability (opt-in, default OFF)
   --observability=PROVIDER    Enable the host-level observability agent. Valid
@@ -76,6 +80,12 @@ Optional observability (opt-in, default OFF)
 
   --newrelic                  Back-compat alias for --observability=newrelic.
   --newrelic-key=KEY          Back-compat alias for --observability-key=KEY.
+
+  --local-dir=PATH            Use PATH as the dockerHosting scripts directory
+                              instead of cloning/pulling from the remote. Skips
+                              the git clone and git pull steps entirely. Intended
+                              for testing local changes before pushing to the
+                              remote (e.g. bind-mounted dev containers).
 
 EXAMPLES
   sudo ./setup.sh
@@ -302,9 +312,10 @@ run_full_setup() {
     log_info "Running full setup from repository scripts..."
     echo ""
 
-    # Parse --force / --force=steps and observability flags
+    # Parse --force / --force=steps / --skip=steps and observability flags
     local FORCE_ALL=false
     local FORCE_STEPS=""
+    local SKIP_STEPS=""
     local OBS_PROVIDER=""
     local OBS_KEY=""
     local OBS_ENDPOINT=""
@@ -312,6 +323,7 @@ run_full_setup() {
         case "$arg" in
             --force) FORCE_ALL=true ;;
             --force=*) FORCE_STEPS="${arg#*=}" ;;
+            --skip=*) SKIP_STEPS="${arg#*=}" ;;
             --observability=*) OBS_PROVIDER="${arg#*=}" ;;
             --observability-key=*) OBS_KEY="${arg#*=}" ;;
             --observability-endpoint=*) OBS_ENDPOINT="${arg#*=}" ;;
@@ -343,6 +355,13 @@ run_full_setup() {
         return 1
     }
 
+    # Returns true if a given step name should be skipped
+    _step_skipped() {
+        local step="$1"
+        [[ -n "$SKIP_STEPS" ]] && echo "$SKIP_STEPS" | grep -qE "(^|,)${step}(,|$)" && return 0
+        return 1
+    }
+
     # Builds the --force flag string for a subscript if the step is forced
     _flag() {
         local step="$1"
@@ -352,28 +371,28 @@ run_full_setup() {
     cd "$DOCKERHOSTING_DIR"
 
     # Install packages from repository config
-    if [ -f "$DOCKERHOSTING_DIR/scripts/install-packages.sh" ]; then
+    if ! _step_skipped "packages" && [ -f "$DOCKERHOSTING_DIR/scripts/install-packages.sh" ]; then
         log_info "Installing additional packages..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/install-packages.sh" $(_flag packages)
     fi
 
     # Install Docker
-    if [ -f "$DOCKERHOSTING_DIR/scripts/install-docker.sh" ]; then
+    if ! _step_skipped "docker" && [ -f "$DOCKERHOSTING_DIR/scripts/install-docker.sh" ]; then
         log_info "Installing Docker..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/install-docker.sh" $(_flag docker)
     fi
 
     # Install Traefik as boundary proxy
-    if [ -f "$DOCKERHOSTING_DIR/scripts/install-traefik.sh" ]; then
+    if ! _step_skipped "traefik" && [ -f "$DOCKERHOSTING_DIR/scripts/install-traefik.sh" ]; then
         log_info "Installing Traefik boundary proxy..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/install-traefik.sh" $(_flag traefik)
     fi
 
     # Configure firewall
-    if [ -f "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" ]; then
+    if ! _step_skipped "firewall" && [ -f "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" ]; then
         log_info "Configuring firewall..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/configure-firewall.sh" $(_flag firewall)
@@ -381,7 +400,7 @@ run_full_setup() {
 
     # Install observability agent (opt-in, default OFF)
     # Runs after firewall so the egress allowlist layers cleanly on top of ufw.
-    if [ -n "$OBS_PROVIDER" ] && [ -f "$DOCKERHOSTING_DIR/scripts/install-observability.sh" ]; then
+    if ! _step_skipped "observability" && [ -n "$OBS_PROVIDER" ] && [ -f "$DOCKERHOSTING_DIR/scripts/install-observability.sh" ]; then
         log_info "Installing observability agent (provider: $OBS_PROVIDER)..."
         local _obs_force
         _obs_force="$(_flag observability)"
@@ -395,77 +414,77 @@ run_full_setup() {
     fi
 
     # Harden kernel parameters
-    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh" ]; then
+    if ! _step_skipped "kernel" && [ -f "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh" ]; then
         log_info "Hardening kernel parameters..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/harden-kernel.sh" $(_flag kernel)
     fi
 
     # Configure NTP time synchronisation (chrony)
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-ntp.sh" ]; then
+    if ! _step_skipped "ntp" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-ntp.sh" ]; then
         log_info "Configuring NTP time synchronisation..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/setup-ntp.sh" $(_flag ntp)
     fi
 
     # Setup audit logging
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-audit.sh" ]; then
+    if ! _step_skipped "audit" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-audit.sh" ]; then
         log_info "Setting up audit logging..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/setup-audit.sh" $(_flag audit)
     fi
 
     # Configure automated security updates
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh" ]; then
+    if ! _step_skipped "auto-updates" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh" ]; then
         log_info "Configuring automated security updates..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/setup-auto-updates.sh" $(_flag auto-updates)
     fi
 
     # Harden Docker daemon
-    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" ]; then
+    if ! _step_skipped "harden-docker" && [ -f "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" ]; then
         log_info "Hardening Docker daemon..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" $(_flag harden-docker)
     fi
 
     # Enable AppArmor mandatory access control
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-apparmor.sh" ]; then
+    if ! _step_skipped "apparmor" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-apparmor.sh" ]; then
         log_info "Enabling AppArmor mandatory access control..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/setup-apparmor.sh" $(_flag apparmor)
     fi
 
     # Configure PAM password policy
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh" ]; then
+    if ! _step_skipped "pam" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh" ]; then
         log_info "Configuring password policy..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/setup-pam-policy.sh" $(_flag pam)
     fi
 
     # Setup AIDE file integrity monitoring
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-aide.sh" ]; then
+    if ! _step_skipped "aide" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-aide.sh" ]; then
         log_info "Setting up file integrity monitoring..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/setup-aide.sh" $(_flag aide)
     fi
 
     # Harden shared memory
-    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh" ]; then
+    if ! _step_skipped "shm" && [ -f "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh" ]; then
         log_info "Hardening shared memory..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/harden-shared-memory.sh" $(_flag shm)
     fi
 
     # Enhanced fail2ban configuration
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh" ]; then
+    if ! _step_skipped "fail2ban" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh" ]; then
         log_info "Configuring enhanced fail2ban protection..."
         # shellcheck disable=SC2046
         bash "$DOCKERHOSTING_DIR/scripts/setup-fail2ban-enhanced.sh" $(_flag fail2ban)
     fi
 
     # Setup email notifications (optional)
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-email.sh" ]; then
+    if ! _step_skipped "email" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-email.sh" ]; then
         echo ""
         log_warn "Email notifications allow the system to send alerts, security notifications, and cron output."
         read -p "Configure email notifications? (y/N) " -n 1 -r
@@ -479,7 +498,7 @@ run_full_setup() {
     fi
 
     # Optional: GRUB bootloader password (prevents single-user-mode bypass)
-    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-bootloader.sh" ]; then
+    if ! _step_skipped "bootloader" && [ -f "$DOCKERHOSTING_DIR/scripts/harden-bootloader.sh" ]; then
         echo ""
         log_warn "GRUB bootloader hardening prevents console/single-user-mode bypass (CIS 1.4)."
         log_warn "Requires remembering a GRUB password — recovery without it needs a rescue disk."
@@ -494,7 +513,7 @@ run_full_setup() {
     fi
 
     # Optional: USB / removable media hardening
-    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-usb.sh" ]; then
+    if ! _step_skipped "usb" && [ -f "$DOCKERHOSTING_DIR/scripts/harden-usb.sh" ]; then
         echo ""
         log_warn "USB hardening blacklists usb-storage, FireWire, and Thunderbolt kernel modules (CIS L2)."
         log_warn "Safe to enable on VMs. On bare-metal, confirm USB input devices are not the only keyboard/mouse."
@@ -510,10 +529,12 @@ run_full_setup() {
     fi
 
     # Ensure a sudo user exists with SSH keys before locking down password auth
-    setup_sudo_user
+    if ! _step_skipped "ssh"; then
+        setup_sudo_user
+    fi
 
     # Harden SSH (do this last as it may affect connectivity)
-    if [ -f "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" ]; then
+    if ! _step_skipped "ssh" && [ -f "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" ]; then
         if ! confirm_ssh_keys_before_hardening; then
             log_warn "Skipping SSH hardening — re-run with --force=ssh once keys are in place"
         else
@@ -523,7 +544,7 @@ run_full_setup() {
     fi
 
     # Optional: SSH MFA (TOTP second factor) — requires per-user enrolment
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-ssh-mfa.sh" ]; then
+    if ! _step_skipped "mfa" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-ssh-mfa.sh" ]; then
         echo ""
         log_warn "SSH MFA adds a TOTP second factor to every SSH login (ISO A.8.5)."
         log_warn "Each user must run 'google-authenticator' after setup or they will be locked out."
@@ -538,7 +559,7 @@ run_full_setup() {
     fi
 
     # Setup log rotation
-    if [ -f "$DOCKERHOSTING_DIR/scripts/setup-logrotate.sh" ]; then
+    if ! _step_skipped "logrotate" && [ -f "$DOCKERHOSTING_DIR/scripts/setup-logrotate.sh" ]; then
         log_info "Configuring log rotation..."
         bash "$DOCKERHOSTING_DIR/scripts/setup-logrotate.sh" "docker-system" "/var/lib/docker/containers"
     fi
@@ -561,6 +582,19 @@ main() {
 
     display_banner
     check_root
+
+    # --local-dir: use a pre-existing local directory; skip clone/pull entirely
+    for arg in "$@"; do
+        if [[ "$arg" == --local-dir=* ]]; then
+            DOCKERHOSTING_DIR="${arg#*=}"
+            log_info "Local-dir mode: using $DOCKERHOSTING_DIR (skipping git clone/pull)"
+            if [ ! -d "$DOCKERHOSTING_DIR" ]; then
+                log_error "--local-dir path does not exist: $DOCKERHOSTING_DIR"
+                exit 1
+            fi
+            break
+        fi
+    done
 
     # --update: pull the repo and exit without running full setup
     for arg in "$@"; do
@@ -597,9 +631,15 @@ main() {
     install_basic_packages
     echo ""
 
-    # Step 2: Clone repository
-    clone_repository
-    echo ""
+    # Step 2: Clone repository (skipped when --local-dir is set)
+    local _local_dir_set=false
+    for arg in "$@"; do
+        [[ "$arg" == --local-dir=* ]] && _local_dir_set=true && break
+    done
+    if [[ "$_local_dir_set" == false ]]; then
+        clone_repository
+        echo ""
+    fi
 
     # Step 3: Run full setup from repository (forward --force / --force=steps)
     run_full_setup "$@"
