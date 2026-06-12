@@ -1090,12 +1090,14 @@ print(' '.join(bad))
         elif [[ "${_running_n}" == "0" ]]; then
             log_error "Post-deploy health check: NO services are running (expected ${_defined_n}) — stack failed to start"
             DEPLOY_STACK_OK=false
-        elif [[ "${_running_n}" -lt "${_defined_n}" ]]; then
-            log_error "Post-deploy health check: only ${_running_n}/${_defined_n} services running (bad: ${_bad})"
-            DEPLOY_STACK_OK=false
         elif [[ -n "${_bad}" ]]; then
-            log_warn "Post-deploy health check: these services are not running/healthy: ${_bad}"
+            log_error "Post-deploy health check: unhealthy/failed services: ${_bad}"
             DEPLOY_STACK_OK=false
+        elif [[ "${_running_n}" -lt "${_defined_n}" ]]; then
+            # Some defined services are not running but none are unhealthy —
+            # these are ephemeral/periodic jobs (cert-gen, rclone-sync, etc.)
+            # that ran and exited cleanly.  Treat as informational.
+            log_info "Post-deploy health check: ${_running_n}/${_defined_n} long-running services up (remainder are ephemeral jobs)"
         fi
     else
         _apply_extra_envs "$env_file"

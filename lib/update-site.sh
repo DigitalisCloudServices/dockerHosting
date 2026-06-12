@@ -124,7 +124,9 @@ _dotenv_set() {
 [[ -f "${GCS_KEY_FILE}" ]] || _fail "GCS service account key not found at ${GCS_KEY_FILE}"
 
 GCS_BUCKET="$(_dotenv_get GCS_BUCKET)"
-[[ -n "${GCS_BUCKET}" ]] || _fail "GCS_BUCKET not set in ${DOTENV} — was deploy-site.sh run?"
+if [[ "${SKIP_DOWNLOAD:-false}" != "true" && "${PULL_ONLY}" != "true" ]]; then
+    [[ -n "${GCS_BUCKET}" ]] || _fail "GCS_BUCKET not set in ${DOTENV} — was deploy-site.sh run?"
+fi
 
 GCS_PREFIX="$(_dotenv_get GCS_PREFIX)"
 GCS_PREFIX="${GCS_PREFIX#/}"
@@ -688,6 +690,16 @@ _dc_up_with_recover() {
             rm -f "${_outfile}"
             return 0
         fi
+        # Transient service_healthy race (F513): container reported unhealthy at the
+        # healthcheck start_period boundary but is already healthy by the next poll.
+        # Retry once after a short wait — all containers will be running on retry.
+        if grep -qE 'dependency failed to start: container .* is unhealthy' "${_outfile}" &&
+            [[ "${_attempt}" -eq 1 ]]; then
+            _warn "Transient health dependency failure detected — waiting 20 s and retrying compose up once (F513)"
+            sleep 20
+            : > "${_outfile}"
+            continue
+        fi
         # Look for the recoverable failure pattern.
         local _failed_net
         _failed_net="$(grep -Eo 'failed to create network [^ :]+' "${_outfile}" |
@@ -761,4 +773,4 @@ for line in sys.stdin:
     except: pass
 print(' '.join(bad))
 " 2> /dev/null || true)
-[[ -n "${_unhealthy}" ]] && _warn "Unhealthy/exited services: ${_unhealthy}"
+[[ -n "${_unhealthy}" ]] && _warn "Unhealthy/exited services: ${_unhealthy}" || true
