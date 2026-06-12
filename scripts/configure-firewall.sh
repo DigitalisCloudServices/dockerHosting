@@ -117,6 +117,8 @@ ufw allow in 22/tcp comment 'SSH' > /dev/null
 # ── Other inbound ───────────────────────────────────────────────────────────
 ufw allow in 80/tcp comment 'HTTP' > /dev/null
 ufw allow in 443/tcp comment 'HTTPS' > /dev/null
+ufw allow in 8443/tcp comment 'Kong API gateway' > /dev/null
+ufw allow in from 10.0.0.0/8 > /dev/null
 ufw allow in from 172.16.0.0/12 > /dev/null
 ufw allow in from 192.168.0.0/16 > /dev/null
 
@@ -129,6 +131,9 @@ ufw allow out 443/tcp comment 'HTTPS out' > /dev/null
 ufw allow out 123/udp comment 'NTP' > /dev/null
 ufw allow out 587/tcp comment 'SMTP submission' > /dev/null
 ufw allow out on lo > /dev/null
+ufw allow out to 10.0.0.0/8 > /dev/null
+ufw allow out to 172.16.0.0/12 > /dev/null
+ufw allow out to 192.168.0.0/16 > /dev/null
 
 # ── Default policies ────────────────────────────────────────────────────────
 # Applied AFTER allow rules. On a running ufw, each `ufw default` writes the
@@ -136,7 +141,7 @@ ufw allow out on lo > /dev/null
 # conntrack. On an inactive ufw, these are config-only until `ufw enable`.
 ufw default deny incoming > /dev/null
 ufw default deny outgoing > /dev/null
-ufw default deny forward > /dev/null
+ufw default allow forward > /dev/null
 
 if [[ "$UFW_ACTIVE" == false ]]; then
     # Preserve existing connections (notably the SSH session running this
@@ -165,8 +170,9 @@ ufw status verbose
 echo ""
 
 echo "[INFO] Default rules configured:"
-echo "  - Inbound:  SSH (22), HTTP (80), HTTPS (443), Docker bridge networks"
-echo "  - Outbound: DNS (53), DNS-over-TLS (853), HTTP (80), HTTPS (443), NTP (123/udp), SMTP (587), loopback"
+echo "  - Inbound:  SSH (22), HTTP (80), HTTPS (443), Kong API gateway (8443), Docker bridge networks (10/8, 172.16/12, 192.168/16)"
+echo "  - Outbound: DNS (53), DNS-over-TLS (853), HTTP (80), HTTPS (443), NTP (123/udp), SMTP (587), loopback, Docker bridge networks (10/8, 172.16/12, 192.168/16)"
+echo "  - Forward:  ALLOW (Docker bridge networking — containers route via the host bridge)"
 echo "  - All other inbound/outbound: DENIED"
 echo ""
 echo "[INFO] To allow additional ports, use:"
