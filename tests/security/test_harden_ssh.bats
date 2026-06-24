@@ -22,6 +22,7 @@ setup() {
     export BANNER="$BATS_TEST_TMPDIR/etc/ssh/banner.txt"
     export F2B_JAIL_D="$BATS_TEST_TMPDIR/etc/fail2ban/jail.d"
     export HARDENED_CONF="$SSHD_CONFIG_D/99-hardening.conf"
+    export IGNOREIP_CONF="$F2B_JAIL_D/00-ignoreip.conf"
 
     mkdir -p "$SSHD_CONFIG_D" "$F2B_JAIL_D" "$(dirname "$SSHD_CONFIG")"
     printf "# fixture sshd_config\n" > "$SSHD_CONFIG"
@@ -29,7 +30,7 @@ setup() {
     # Mocks
     create_mock "sshd"           # sshd -t  →  always valid
     create_mock "systemctl"      # systemctl reload sshd
-    # fail2ban-client absent on purpose — exercises the no-fail2ban branch.
+    create_mock "fail2ban-client"  # present + exits 0 so the fail2ban branch runs
 
     # Patch the script to use temp paths.  Two-phase sed: first replace the
     # real paths with unique placeholders (longest match first so prefixes
@@ -160,4 +161,69 @@ teardown() {
     bash "$HARDEN_SCRIPT" --force
     assert_file_exists "$BANNER"
     assert_file_contains "$BANNER" "AUTHORIZED ACCESS ONLY"
+}
+
+# ── fail2ban ignoreip drop-in (2026-06-24) ────────────────────────────────────
+
+@test "harden-ssh: ignoreip drop-in is always created when fail2ban-client is present" {
+    bash "$HARDEN_SCRIPT" --force
+    assert_file_exists "$IGNOREIP_CONF"
+}
+
+@test "harden-ssh: default ignoreip ships with loopback only (no public IPs)" {
+    bash "$HARDEN_SCRIPT" --force
+    assert_file_contains "$IGNOREIP_CONF" "ignoreip = 127.0.0.1/8 ::1"
+    refute_file_contains "$IGNOREIP_CONF" "10.0.0.0/8"
+    refute_file_contains "$IGNOREIP_CONF" "192.168.0.0/16"
+}
+
+@test "harden-ssh: --ignore-ip appends a single IP to the ignoreip list" {
+    bash "$HARDEN_SCRIPT" --force --ignore-ip 203.0.113.42
+    assert_file_contains "$IGNOREIP_CONF" "203.0.113.42"
+    assert_file_contains "$IGNOREIP_CONF" "127.0.0.1/8"
+}
+
+@test "harden-ssh: --ignore-ip can be repeated" {
+    bash "$HARDEN_SCRIPT" --force \
+        --ignore-ip 203.0.113.42 \
+        --ignore-ip 198.51.100.7
+    assert_file_contains "$IGNOREIP_CONF" "203.0.113.42"
+    assert_file_contains "$IGNOREIP_CONF" "198.51.100.7"
+}
+
+@test "harden-ssh: --ignore-private-ranges adds RFC1918 CIDRs" {
+    bash "$HARDEN_SCRIPT" --force --ignore-private-ranges
+    assert_file_contains "$IGNOREIP_CONF" "10.0.0.0/8"
+    assert_file_contains "$IGNOREIP_CONF" "172.16.0.0/12"
+    assert_file_contains "$IGNOREIP_CONF" "192.168.0.0/16"
+}
+
+@test "harden-ssh: --ignore-private-ranges + --ignore-ip can be combined" {
+    bash "$HARDEN_SCRIPT" --force --ignore-private-ranges --ignore-ip 203.0.113.42
+    assert_file_contains "$IGNOREIP_CONF" "203.0.113.42"
+    assert_file_contains "$IGNOREIP_CONF" "10.0.0.0/8"
+}
+
+@test "harden-ssh: --ignore-ip requires a value (exits 2 if missing)" {
+    run bash "$HARDEN_SCRIPT" --force --ignore-ip
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--ignore-ip requires"* ]]
+}
+
+@test "harden-ssh: unknown flag rejected with exit 2" {
+    run bash "$HARDEN_SCRIPT" --force --bogus
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"Unknown argument"* ]]
+}
+
+@test "harden-ssh: ignoreip drop-in is in the [DEFAULT] section (applies to every jail)" {
+    bash "$HARDEN_SCRIPT" --force
+    assert_file_contains "$IGNOREIP_CONF" "[DEFAULT]"
+}
+
+@test "harden-ssh: ignoreip drop-in carries the 00- prefix so it loads first" {
+    bash "$HARDEN_SCRIPT" --force
+    # The fixture path embeds the basename so assert it ends in 00-ignoreip.conf
+    [ "${IGNOREIP_CONF##*/}" = "00-ignoreip.conf" ]
+    assert_file_exists "$IGNOREIP_CONF"
 }

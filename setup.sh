@@ -538,8 +538,54 @@ run_full_setup() {
         if ! confirm_ssh_keys_before_hardening; then
             log_warn "Skipping SSH hardening — re-run with --force=ssh once keys are in place"
         else
+            # Prompt for fail2ban ignoreip entries.  The defaults are loopback
+            # only; an accidental ban of the operator's own IP (e.g. another
+            # admin process triggering maxretry) becomes a high-stress incident
+            # if there's no other way back in, so we offer to whitelist up front.
+            HARDEN_IGNORE_FLAGS=()
+
+            # Detect the source IP of the current SSH session (best-effort).
+            # $SSH_CLIENT is dropped by sudo unless `-E` was used, so fall back
+            # to `who am i` which queries utmp directly.
+            source_ip=""
+            if [[ -n "${SSH_CLIENT:-}" ]]; then
+                source_ip="${SSH_CLIENT%% *}"
+            else
+                source_ip="$(who am i 2> /dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+            fi
+
+            if [[ -n "$source_ip" ]]; then
+                # Is it a public address?  RFC1918 private + loopback + link-local don't need
+                # the prompt — they're either covered by --ignore-private-ranges below or
+                # already whitelisted via 127.0.0.1/8.
+                is_private=false
+                case "$source_ip" in
+                    10.* | 192.168.* | 127.* | 169.254.*) is_private=true ;;
+                    172.1[6-9].* | 172.2[0-9].* | 172.3[0-1].*) is_private=true ;;
+                esac
+                if [[ "$is_private" == "false" ]]; then
+                    echo ""
+                    log_warn "Your current source IP is ${source_ip} (public)."
+                    log_warn "Without whitelisting it, a misconfigured client (wrong username, key mismatch, etc.) can lock you out via fail2ban — maxretry is 3."
+                    read -p "Add ${source_ip} to fail2ban's never-ban list? (Y/n) " -n 1 -r
+                    echo ""
+                    if [[ ! "$REPLY" =~ ^[Nn]$ ]]; then
+                        HARDEN_IGNORE_FLAGS+=("--ignore-ip" "$source_ip")
+                        log_info "Will whitelist ${source_ip}"
+                    fi
+                fi
+            fi
+
+            echo ""
+            read -p "Whitelist RFC1918 private ranges (10/8, 172.16/12, 192.168/16) so internal admin hosts can never be banned? (y/N) " -n 1 -r
+            echo ""
+            if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                HARDEN_IGNORE_FLAGS+=("--ignore-private-ranges")
+                log_info "Will whitelist 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+            fi
+
             # shellcheck disable=SC2046
-            bash "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" $(_flag ssh)
+            bash "$DOCKERHOSTING_DIR/scripts/harden-ssh.sh" $(_flag ssh) "${HARDEN_IGNORE_FLAGS[@]}"
         fi
     fi
 
