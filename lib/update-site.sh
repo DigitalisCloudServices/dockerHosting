@@ -749,6 +749,49 @@ else
     fi
 fi
 
+# F727: hard-abort the deploy if mariadb-sync exited non-zero. The container
+# uses `restart: "no"` so a single failure leaves it in `exited(1)` silently.
+# Historically `docker compose up -d` returned success regardless and the
+# stale schema only surfaced when the API's `_wait_for_schema()` gate
+# tripped (whichever cycle bumped `_MINIMUM_SCHEMA_VERSION`). Surface the
+# failure NOW, before post-start hooks and before declaring the deploy
+# complete. mariadb-sync is optional: skip the check if the project does
+# not define it.
+_assert_mariadb_sync_succeeded() {
+    local _svc=mariadb-sync _cid _state _ec _attempts=0 _max_attempts=30
+    _cid="$(docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" ps -q "${_svc}" 2> /dev/null || true)"
+    if [[ -z "${_cid}" ]]; then
+        return 0 # no mariadb-sync defined; nothing to check
+    fi
+    # mariadb-sync runs and exits; tolerate up to ~30 s before assuming it is
+    # stuck (it should normally finish in under 10 s).
+    while :; do
+        _state="$(docker inspect --format '{{.State.Status}}' "${_cid}" 2> /dev/null || echo missing)"
+        if [[ "${_state}" == "exited" ]]; then
+            break
+        fi
+        if [[ "${_attempts}" -ge "${_max_attempts}" ]]; then
+            _warn "F727 mariadb-sync did not exit within 30 s (state=${_state}); proceeding without check"
+            return 0
+        fi
+        _attempts=$((_attempts + 1))
+        sleep 1
+    done
+    _ec="$(docker inspect --format '{{.State.ExitCode}}' "${_cid}")"
+    if [[ "${_ec}" -ne 0 ]]; then
+        printf '\n========================================================================\n' >&2
+        printf 'F727 DEPLOY ABORT - mariadb-sync exited with code %s\n' "${_ec}" >&2
+        printf 'Schema migrations did NOT run. New API code that requires the latest\n' >&2
+        printf 'schema would crash-loop on _wait_for_schema(). Last 50 log lines:\n' >&2
+        printf '------------------------------------------------------------------------\n' >&2
+        docker logs --tail 50 "${_cid}" 2>&1 | sed 's/^/  /' >&2 || true
+        printf '========================================================================\n' >&2
+        _fail "mariadb-sync failed - see logs above. Common causes: cap_add list missing CAP_CHOWN/CAP_FOWNER/CAP_DAC_OVERRIDE/CAP_SETUID/CAP_SETGID on the mariadb-sync service (re-introduces the 2026-06-24 incident), or a SQL migration script error."
+    fi
+    _log "F727 mariadb-sync ok (exit 0)"
+}
+_assert_mariadb_sync_succeeded
+
 # Run post-start lifecycle hooks
 _run_hooks "post-start"
 
