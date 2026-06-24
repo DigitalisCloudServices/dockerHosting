@@ -108,7 +108,7 @@ lint: check-deps
 # ── tests ────────────────────────────────────────────────────────────────────
 
 # Core test suite (required checks only)
-test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
+test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-harden-ssh test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
 	@echo "✓ All required tests passed"
 
 # Comprehensive test suite with optional quality checks
@@ -154,6 +154,10 @@ test-harden-docker: check-deps
 test-harden-kernel: check-deps
 	@echo "Running kernel hardening tests..."
 	@bats tests/security/test_harden_kernel.bats
+
+test-harden-ssh: check-deps
+	@echo "Running SSH hardening tests..."
+	@bats tests/security/test_harden_ssh.bats
 
 test-install-packages: check-deps
 	@echo "Running install-packages tests..."

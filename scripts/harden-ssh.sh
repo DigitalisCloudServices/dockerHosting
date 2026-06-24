@@ -54,8 +54,17 @@ KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-grou
 LoginGraceTime 30
 MaxAuthTries 3
 MaxSessions 5
-ClientAliveInterval 300
-ClientAliveCountMax 2
+# Reap dead clients within ~3 minutes (60s × 3 probes).  Default of 0 lets
+# half-dead sessions accumulate as sshd-session zombies; combined with
+# MaxStartups 10:30:100 (sshd default) and no per-source cap, a single
+# misbehaving client can monopolise all 10 unauthenticated slots and lock
+# everyone out until the service is restarted.
+ClientAliveInterval 60
+ClientAliveCountMax 3
+# Cap any single source IP (or /24) to 5 of the 10 unauthenticated slots,
+# so one burst-y client cannot DoS the listener.
+PerSourceMaxStartups 5
+PerSourceNetBlockSize 24
 
 # Logging
 LogLevel VERBOSE
