@@ -631,7 +631,20 @@ _names_csv="$(
 
 # ── Restart stale services ────────────────────────────────────────────────────
 
-# Run pre-start lifecycle hooks (snapshotted before potential infra extraction above)
+# Bug #7 (2026-06-28): re-snapshot the hook list after infra extraction so any
+# new hooks shipped in this release take effect on the tick that ships them,
+# not from the next tick. The early snapshot at line 147 is the fallback for
+# the case where extraction failed or the file was deleted.
+if [[ -f "${HOOKS_FILE}" ]]; then
+    _refreshed_hooks="$(python3 -c \
+        "import json; d=json.load(open('${HOOKS_FILE}')); print(json.dumps(d.get('hooks', [])))" \
+        2> /dev/null || echo "")"
+    if [[ -n "${_refreshed_hooks}" ]] && [[ "${_refreshed_hooks}" != "[]" ]]; then
+        HOOKS_SNAPSHOT="${_refreshed_hooks}"
+    fi
+fi
+
+# Run pre-start lifecycle hooks (re-snapshotted from extracted infra so newly-added hooks run on the ticket that ships them)
 _run_hooks "pre-start"
 
 _log "Authenticating Docker to Artifact Registry..."
@@ -727,8 +740,32 @@ _dc_up_with_recover() {
 }
 
 if [[ "${INFRA_STALE}" == "true" ]]; then
-    _log "Infra updated — restarting all services"
-    _dc_up_with_recover -d --force-recreate
+    # Bug #7 (2026-06-28): previously this branch passed --force-recreate
+    # with no service list, which recreated EVERY container — including
+    # vault — on every infra-hash change. Recreating vault routinely turned
+    # out to be unsafe (chaos cycle left the in-memory token store desynced
+    # from raft, and the following compose-up brought up every consumer
+    # holding pre-recreate tokens against a vault that no longer knew them).
+    #
+    # Artifact-loader services (api / web / worker-* / admin) still need
+    # --force-recreate to pick up new artifact contents — their compose
+    # config doesn't change when a fresh artifact ships, so compose's
+    # own config-hash detection sees no diff. The surgical fix: enumerate
+    # the project's services and force-recreate everything *except* vault.
+    # Vault is recreated only when its own compose config actually changes
+    # (image bump, mount edit, env-var change) — same trigger that pre-Bug-7
+    # behaviour used, but no longer driven by every unrelated update.
+    _all_services="$(docker compose --project-directory "${PROJECT_DIR}" \
+        --env-file "${DOTENV}" config --services 2> /dev/null |
+        grep -vE '^(vault)$' | tr '\n' ' ')"
+    if [[ -n "${_all_services}" ]]; then
+        _log "Infra updated — force-recreating all services except vault"
+        # shellcheck disable=SC2086
+        _dc_up_with_recover -d --force-recreate ${_all_services}
+    else
+        _warn "Could not enumerate compose services — falling back to default up -d"
+        _dc_up_with_recover -d
+    fi
 elif [[ "${_force_full_up}" == "true" ]]; then
     _log "Bootstrap recovery — bringing up all services"
     _dc_up_with_recover -d
