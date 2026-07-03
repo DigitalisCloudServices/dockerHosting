@@ -90,6 +90,28 @@ GCS_KEY_FILE="${PROJECT_DIR}/secrets/gcs_service_account.json"
 # deploy directory rather than their own (possibly symlinked) script location.
 export COMPOSE_DIR="${PROJECT_DIR}"
 
+# ── Compose overlay detection ─────────────────────────────────────────────────
+# The velaair CLI's opt-in overlays (F765 mariadb-replica, F510 debug, etc.) are
+# expressed as marker files under secrets/. Without honouring them here, every
+# update cycle collapses the stack back to the base compose (the pause stubs)
+# and the operator has to re-run `velaair mariadb enable` to reattach the
+# replica. Set COMPOSE_FILE up front so every `docker compose ...` invocation
+# below picks up the same overlay set the CLI would use.
+_compose_files=("${PROJECT_DIR}/docker-compose.yml")
+if [[ -f "${PROJECT_DIR}/secrets/mariadb-replica-enabled" ]]; then
+    _compose_files+=("${PROJECT_DIR}/docker-compose.replicas.yml")
+fi
+# Docker Compose reads COMPOSE_FILE as a colon-separated list.
+_compose_file_joined=""
+for _f in "${_compose_files[@]}"; do
+    if [[ -z "${_compose_file_joined}" ]]; then
+        _compose_file_joined="${_f}"
+    else
+        _compose_file_joined="${_compose_file_joined}:${_f}"
+    fi
+done
+export COMPOSE_FILE="${_compose_file_joined}"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
