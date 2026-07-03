@@ -109,6 +109,7 @@ ensure_packages() {
     command -v getent > /dev/null 2>&1 || true # getent is in libc-bin, always present
     if ((${#need[@]} > 0)); then
         log_info "Installing required packages: ${need[*]}"
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y "${need[@]}"
     fi
