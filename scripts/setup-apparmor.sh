@@ -8,6 +8,23 @@ export PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # Docker default profile so every container gets a baseline
 # confinement policy even if the compose file doesn't specify one.
 #
+# Custom AppArmor profiles (under templates/apparmor.d/) are also synced
+# into /etc/apparmor.d/ and reloaded.  This section ALWAYS runs — even on
+# hosts where AppArmor is already enabled and the rest of setup short-
+# circuits — so that re-running setup.sh picks up profiles added since
+# the host's last run.  See sync_custom_profiles() below.
+#
+#   Add a new profile        → drop the file under templates/apparmor.d/
+#                              and re-run setup.sh on every host
+#   Modify a profile         → edit templates/apparmor.d/<name>,
+#                              re-run setup.sh; sync detects the diff
+#                              and reloads via apparmor_parser -r
+#   Reference from compose   → security_opt: [ "apparmor:<name>" ]
+#
+# Persistence across reboots: apparmor.service (provided by the apparmor
+# package) auto-loads everything under /etc/apparmor.d/ at boot, so once
+# a profile file is installed there it survives kernel restarts.
+#
 # Based on: CIS Docker Benchmark 2.8, CIS Linux Level 2
 #############################################
 
@@ -20,8 +37,54 @@ for arg in "$@"; do
     [[ "$arg" == "--force" ]] && FORCE=true
 done
 
+DOCKERHOSTING_DIR="${DOCKERHOSTING_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+# Sync custom dockerHosting AppArmor profiles from templates/apparmor.d/ into
+# /etc/apparmor.d/.  Always runs (even when the early-return below short-circuits
+# the rest of setup), so a host re-running setup.sh picks up new profiles that
+# were added since its last run.  Idempotent: only writes when the source differs.
+#
+# Profiles are required by certain container workloads (e.g. the VelaAir web
+# container's velaair-fuse profile permits fuse.* mount(2) at /app/tiles for the
+# gcsfuse-backed tile layer, which the default docker-default profile denies).
+sync_custom_profiles() {
+    [[ -d "$DOCKERHOSTING_DIR/templates/apparmor.d" ]] || return 0
+
+    local src dst
+    local installed=0
+    for src in "$DOCKERHOSTING_DIR"/templates/apparmor.d/*; do
+        [[ -f "$src" ]] || continue
+        dst="/etc/apparmor.d/$(basename "$src")"
+        if [[ ! -f "$dst" ]] || ! cmp -s "$src" "$dst"; then
+            install -m 0644 -o root -g root "$src" "$dst"
+            echo "[INFO] Installed custom AppArmor profile: $(basename "$dst")"
+            installed=$((installed + 1))
+        fi
+    done
+
+    # Reload installed profiles if AppArmor is active on the running kernel.
+    # Otherwise the kernel will load them automatically at next boot via
+    # apparmor.service reading /etc/apparmor.d/.
+    if command -v aa-status &> /dev/null && aa-status --enabled 2> /dev/null; then
+        for src in "$DOCKERHOSTING_DIR"/templates/apparmor.d/*; do
+            [[ -f "$src" ]] || continue
+            dst="/etc/apparmor.d/$(basename "$src")"
+            if apparmor_parser -r "$dst" 2> /dev/null; then
+                echo "[INFO] Loaded $(basename "$dst")"
+            else
+                echo "[WARN] Could not load $(basename "$dst") — check syntax with: apparmor_parser -d $dst"
+            fi
+        done
+    elif [[ $installed -gt 0 ]]; then
+        echo "[INFO] AppArmor not active yet — installed profiles will load at next reboot"
+    fi
+}
+
+sync_custom_profiles
+
 if [[ "$FORCE" == false ]] && command -v aa-status &> /dev/null && aa-status --enabled 2> /dev/null; then
-    echo "[INFO] AppArmor already enabled — skipping (use --force to reconfigure)"
+    echo "[INFO] AppArmor already enabled — skipping host-level setup (use --force to reconfigure)"
+    echo "[INFO] Custom profiles were synced above.  Run with --force to also rerun GRUB / package setup."
     aa-status --summary 2> /dev/null || true
     exit 0
 fi
@@ -50,9 +113,12 @@ else
     echo "[INFO] AppArmor kernel parameters already set"
 fi
 
-# If AppArmor is active now (was already in cmdline from last boot), load profiles
+# If AppArmor is active now (was already in cmdline from last boot), load profiles.
+# Custom dockerHosting profiles were already synced + reloaded earlier by
+# sync_custom_profiles() — this block handles the docker-default + apparmor-profiles-extra
+# load that goes with the freshly-installed packages.
 if aa-status --enabled 2> /dev/null; then
-    echo "[INFO] AppArmor is active — loading profiles..."
+    echo "[INFO] AppArmor is active — loading docker + extra profiles..."
 
     # Load Docker-specific AppArmor profile if present (installed by docker-ce)
     if [[ -f /etc/apparmor.d/docker ]]; then
