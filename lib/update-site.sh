@@ -101,6 +101,10 @@ _compose_files=("${PROJECT_DIR}/docker-compose.yml")
 if [[ -f "${PROJECT_DIR}/secrets/mariadb-replica-enabled" ]]; then
     _compose_files+=("${PROJECT_DIR}/docker-compose.replicas.yml")
 fi
+# VelaAir F787: WireGuard sidecar overlay — enabled by secrets/wireguard-enabled marker.
+if [[ -f "${PROJECT_DIR}/secrets/wireguard-enabled" ]]; then
+    _compose_files+=("${PROJECT_DIR}/docker-compose.wireguard.yml")
+fi
 # Docker Compose reads COMPOSE_FILE as a colon-separated list.
 _compose_file_joined=""
 for _f in "${_compose_files[@]}"; do
