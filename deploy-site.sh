@@ -81,10 +81,22 @@ display_banner() {
 
 find_next_kong_port() {
     local port="${1:-8443}"
+    local exclude_env_file="${2:-}"
+    local apps_dir="${APPS_DIR:-/opt/apps}"
     local used=""
-    if [[ -d /opt/apps ]]; then
-        used=$(grep -rh "^KONG_HTTPS_PORT=" /opt/apps/ 2> /dev/null |
+    if [[ -d "$apps_dir" ]]; then
+        used=$(grep -rh "^KONG_HTTPS_PORT=" "$apps_dir/" 2> /dev/null |
             cut -d= -f2 | tr -d '"' | sort -n || true)
+        # Exclude the caller's own .env so a redeploy of the same site does
+        # not treat its previously-assigned port as "in use by someone else".
+        if [[ -n "$exclude_env_file" && -f "$exclude_env_file" ]]; then
+            local own_port
+            own_port=$(grep -E "^KONG_HTTPS_PORT=" "$exclude_env_file" 2> /dev/null |
+                tail -1 | cut -d= -f2 | tr -d '"')
+            if [[ -n "$own_port" ]]; then
+                used=$(echo "$used" | grep -vx "$own_port" || true)
+            fi
+        fi
     fi
     while echo "$used" | grep -qx "$port" ||
         ss -tlnp 2> /dev/null | awk '{print $4}' | grep -q ":${port}$"; do
@@ -696,13 +708,30 @@ main() {
         exit 1
     fi
 
-    # Kong port
+    # Kong port. A redeploy of the same site must keep its previously
+    # assigned port — otherwise .env drifts away from the (potentially
+    # hand-customised) Traefik dynamic config and traffic 502s.
+    local existing_env_file="$DEPLOY_DIR/.env"
+    local existing_port=""
+    if [[ -f "$existing_env_file" ]]; then
+        existing_port=$(_env_get "KONG_HTTPS_PORT" "$existing_env_file")
+    fi
+
     local suggested_port
-    suggested_port=$(find_next_kong_port 8443)
+    if [[ -n "$existing_port" && "$existing_port" =~ ^[0-9]+$ ]]; then
+        suggested_port="$existing_port"
+    else
+        suggested_port=$(find_next_kong_port 8443 "$existing_env_file")
+    fi
+
     if [[ -z "$KONG_PORT" ]]; then
         if [[ "$NON_INTERACTIVE" != "true" ]]; then
             echo ""
-            log_info "Kong internal HTTPS port (loopback only, Traefik proxies to this):"
+            if [[ -n "$existing_port" ]]; then
+                log_info "Kong internal HTTPS port (existing assignment for this site):"
+            else
+                log_info "Kong internal HTTPS port (loopback only, Traefik proxies to this):"
+            fi
             read -rp "Port [${suggested_port}]: " input
             KONG_PORT="${input:-$suggested_port}"
         else
@@ -1111,6 +1140,27 @@ print(' '.join(bad))
     log_step "7/8  Traefik routing"
 
     local traefik_script="$SCRIPT_DIR/scripts/add-traefik-site.sh"
+    local traefik_port_script="$SCRIPT_DIR/scripts/update-traefik-port.sh"
+    local traefik_dynamic_dir="${TRAEFIK_DYNAMIC_DIR:-/etc/traefik/dynamic}"
+    local existing_traefik_config="$traefik_dynamic_dir/${SITE_NAME}.yml"
+
+    # Drift guard: if a site config already exists but its upstream port
+    # does not match KONG_PORT (e.g. .env was overridden, or the site was
+    # redeployed with --kong-port), surgically patch the port line before
+    # offering the full rewrite prompt. Preserves hand customisations
+    # (multi-host router rules, extra middlewares, TLS blocks).
+    if [[ -n "$DOMAIN" && -f "$existing_traefik_config" && -x "$traefik_port_script" ]]; then
+        local existing_traefik_port
+        existing_traefik_port=$(grep -oE '127\.0\.0\.1:[0-9]+' "$existing_traefik_config" 2> /dev/null |
+            head -1 | cut -d: -f2)
+        if [[ -n "$existing_traefik_port" && "$existing_traefik_port" != "$KONG_PORT" ]]; then
+            log_warn "Traefik config port (${existing_traefik_port}) differs from KONG_HTTPS_PORT (${KONG_PORT})"
+            log_info "Reconciling in place — customisations preserved"
+            TRAEFIK_DYNAMIC_DIR="$traefik_dynamic_dir" \
+                bash "$traefik_port_script" "$SITE_NAME" "$KONG_PORT" || true
+        fi
+    fi
+
     if [[ -n "$DOMAIN" ]]; then
         local traefik_cmd="sudo ${traefik_script} ${DOMAIN} ${KONG_PORT} ${SITE_NAME}"
         log_info "Suggested Traefik command:"
