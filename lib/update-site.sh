@@ -105,6 +105,16 @@ fi
 if [[ -f "${PROJECT_DIR}/secrets/wireguard-enabled" ]]; then
     _compose_files+=("${PROJECT_DIR}/docker-compose.wireguard.yml")
 fi
+# VelaAir F490 bug fix (2026-07-13): dev + devhost-inner overlays. Without these
+# the devhost bootstrap's api container is created with only the base compose
+# and misses the ${API_DEV_SOURCE}:/run/artifact/api bind, so artifact-loader
+# FATALs with "No artifact provided" and the container never reaches healthy.
+if [[ -f "${PROJECT_DIR}/secrets/devhost-enabled" ]]; then
+    [[ -f "${PROJECT_DIR}/docker-compose.dev.yml" ]] &&
+        _compose_files+=("${PROJECT_DIR}/docker-compose.dev.yml")
+    [[ -f "${PROJECT_DIR}/docker-compose.devhost-inner.yml" ]] &&
+        _compose_files+=("${PROJECT_DIR}/docker-compose.devhost-inner.yml")
+fi
 # Docker Compose reads COMPOSE_FILE as a colon-separated list.
 _compose_file_joined=""
 for _f in "${_compose_files[@]}"; do
