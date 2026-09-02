@@ -27,15 +27,53 @@ services:
     environment:
       NRIA_OVERRIDE_HOST_ROOT: /host
       NEW_RELIC_REGION: EU
-      NRIA_DISPLAY_NAME: "${HOSTNAME}"
       NRIA_CUSTOM_ATTRIBUTES: '{"managed_by":"dockerHosting"}'
+      # NRIA_DISPLAY_NAME is set in /etc/observability/newrelic.env, not here.
+      # A compose `environment:` entry always wins over `env_file:`, and
+      # "${HOSTNAME}" resolved to the empty string because HOSTNAME is a bash
+      # internal, never exported, so docker compose never saw it. The agent
+      # therefore reported with no display name at all.
+      #
+      # ── Ingest reduction ────────────────────────────────────────────────
+      # The agent filters veth* and lo by default but NOT br-* or docker0. On
+      # a Docker host that leaves every container bridge reporting every 5s:
+      # measured 17 of 18 reporting interfaces were bridges nobody monitors,
+      # ~9 GB/month against a 100 GB allowance. Setting this key REPLACES the
+      # default list, so the stock prefixes are repeated deliberately.
+      NRIA_NETWORK_INTERFACE_FILTERS: '{"prefix":["dummy","lo","vether","veth","docker","br-"],"index-1":["tun"]}'
+      # Sample rates in seconds. SystemSample backs the live host alerts, so
+      # it is slowed rather than gutted; network and storage go to 1 minute.
+      NRIA_METRICS_NETWORK_SAMPLE_RATE: 60
+      NRIA_METRICS_STORAGE_SAMPLE_RATE: 60
+      NRIA_METRICS_SYSTEM_SAMPLE_RATE: 30
+      # NOTE: ContainerSample (~13 GB/month, the largest single line item) is
+      # NOT tunable here. nri-docker's 15s interval is baked into the image at
+      # /etc/newrelic-infra/integrations.d/docker-config.yml and needs a
+      # bind-mounted override to change. Deliberately left alone.
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -x newrelic-infra >/dev/null 2>&1 || exit 1"]
+      # Verified on the production host, 2026-09-02: FailingStreak 39708 while
+      # the agent was reporting perfectly.
+      #
+      # Despite pid: host, the container's /proc view shows only a subset of
+      # host processes (224 of them). The agent's own process -- whose comm is
+      # exactly "newrelic-infra" -- is NOT among them, so `pgrep -x` finds
+      # nothing and the check has never once passed. What IS visible is the
+      # tini wrapper, `/sbin/tini -- /usr/bin/newrelic-infra-service`, and
+      # `pgrep -f` matches that cmdline substring. Confirmed by running both
+      # forms inside the container: -x no match, -f match.
+      #
+      # Matching the wrapper is an acceptable liveness proxy because tini is
+      # the container's pid 1 and exits when its child does, so a dead agent
+      # takes the container down rather than leaving this check falsely green.
+      # The more rigorous option, if this ever needs to assert function rather
+      # than liveness, is NRIA_STATUS_SERVER_ENABLED plus a request to
+      # /v1/status/health on NRIA_STATUS_SERVER_PORT.
+      test: ["CMD-SHELL", "pgrep -f /usr/bin/newrelic-infra >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -113,6 +113,12 @@ render_env_content() {
     case "$PROVIDER" in
         newrelic)
             printf 'NRIA_LICENSE_KEY=%s\n' "$KEY"
+            # Set here rather than in the compose template: a compose
+            # `environment:` entry always beats `env_file:`, and the template's
+            # "${HOSTNAME}" resolved to empty because HOSTNAME is a bash
+            # internal that is never exported, so the agent reported with no
+            # display name. hostname -f is stable, so this stays idempotent.
+            printf 'NRIA_DISPLAY_NAME=%s\n' "$(hostname -f 2> /dev/null || hostname)"
             ;;
         opentelemetry)
             printf 'OTLP_ENDPOINT=%s\n' "$ENDPOINT"
