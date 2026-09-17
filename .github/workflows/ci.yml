@@ -179,6 +179,20 @@ jobs:
       - name: Run Harden Kernel tests
         run: bats tests/security/test_harden_kernel.bats
 
+  test-setup-audit:
+    name: Setup audit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Run setup-audit tests
+        run: bats tests/security/test_setup_audit.bats
+
   test-install-packages:
     name: Install packages tests
     runs-on: ubuntu-latest

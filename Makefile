@@ -7,7 +7,7 @@
 #                    pip install bashate
 
 .PHONY: help lint test test-traefik test-lib test-syntax test-args test-yaml test-pam test-hooks \
-        test-fail2ban test-harden-docker test-harden-kernel test-install-packages test-scan-image \
+        test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-install-packages test-scan-image \
         test-firewall test-run-report test-install-observability test-configure-observability-egress \
         test-format test-style test-security test-complexity test-unused test-docs test-permissions \
         format coverage ci test-all check-deps install-hooks uninstall-hooks
@@ -43,6 +43,7 @@ help:
 	@echo "  make test-fail2ban     Run fail2ban tests"
 	@echo "  make test-harden-docker Run Docker hardening tests"
 	@echo "  make test-harden-kernel Run kernel hardening tests"
+	@echo "  make test-setup-audit   Run auditd rule tests"
 	@echo "  make test-install-packages Run install-packages tests"
 	@echo "  make test-scan-image   Run image scanning tests"
 	@echo "  make test-yaml         Run YAML validation checks"
@@ -108,7 +109,7 @@ lint: check-deps
 # ── tests ────────────────────────────────────────────────────────────────────
 
 # Core test suite (required checks only)
-test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-harden-ssh test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
+test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-harden-ssh test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
 	@echo "✓ All required tests passed"
 
 # Comprehensive test suite with optional quality checks
@@ -154,6 +155,10 @@ test-harden-docker: check-deps
 test-harden-kernel: check-deps
 	@echo "Running kernel hardening tests..."
 	@bats tests/security/test_harden_kernel.bats
+
+test-setup-audit: check-deps
+	@echo "Running auditd rule tests..."
+	@bats tests/security/test_setup_audit.bats
 
 test-harden-ssh: check-deps
 	@echo "Running SSH hardening tests..."
