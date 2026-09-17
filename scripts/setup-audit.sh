@@ -159,6 +159,42 @@ EOF
 
 echo "[INFO] Created audit rules: /etc/audit/rules.d/99-security.rules"
 
+# Strip what this host can't load: syscall names the architecture doesn't have
+# (arm64 has no open/unlink/rename/renameat) and watches whose directory is
+# missing (e.g. /boot/grub on a Raspberry Pi). auditctl rejects the whole file
+# on a single bad line, which would leave the host with no audit rules at all.
+filter_unsupported_rules() {
+    local rules="$1" line arch names kept s path
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^-w\ ([^ ]+) ]]; then
+            path="${BASH_REMATCH[1]}"
+            [[ "$path" == */ ]] || path="$(dirname "$path")"
+            if [[ ! -d "$path" ]]; then
+                echo "[WARN] $path does not exist on this host, dropping: $line" >&2
+                continue
+            fi
+        elif [[ "$line" =~ -F\ arch=(b32|b64)\ -S\ ([a-z0-9_,]+) ]] && [[ "${BASH_REMATCH[2]}" != "all" ]]; then
+            arch="${BASH_REMATCH[1]}"
+            names="${BASH_REMATCH[2]}"
+            kept=""
+            for s in ${names//,/ }; do
+                if ausyscall "$arch" "$s" --exact > /dev/null 2>&1; then
+                    kept="${kept:+$kept,}$s"
+                fi
+            done
+            if [[ -z "$kept" ]]; then
+                echo "[WARN] No $arch syscalls in rule are known on this architecture, dropping: $line" >&2
+                continue
+            fi
+            line="${line/-S $names/-S $kept}"
+        fi
+        printf '%s\n' "$line"
+    done < "$rules" > "$rules.tmp"
+    mv "$rules.tmp" "$rules"
+}
+
+filter_unsupported_rules /etc/audit/rules.d/99-security.rules
+
 # Configure auditd settings for better performance and retention
 cat > /etc/audit/auditd.conf << 'EOF'
 # Audit daemon configuration
