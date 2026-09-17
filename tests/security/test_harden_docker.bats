@@ -123,6 +123,22 @@ teardown() {
     refute_file_contains "$DOCKER_DAEMON_JSON" '"userns-remap"'
 }
 
+@test "harden-docker: --userns-remap=no omits remap without reading stdin" {
+    # stdin says "y" — the flag must win
+    bash "$HARDEN_DOCKER_SCRIPT" --force --userns-remap=no <<< "y"
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"userns-remap"'
+}
+
+@test "harden-docker: --userns-remap=yes includes remap without reading stdin" {
+    bash "$HARDEN_DOCKER_SCRIPT" --force --userns-remap=yes <<< "n"
+    assert_file_contains "$DOCKER_DAEMON_JSON" '"userns-remap": "default"'
+}
+
+@test "harden-docker: rejects invalid --userns-remap value" {
+    run bash "$HARDEN_DOCKER_SCRIPT" --force --userns-remap=maybe
+    [ "$status" -eq 2 ]
+}
+
 @test "harden-docker: creates dockremap user when userns-remap enabled" {
     # Mock id to indicate dockremap doesn't exist
     create_mock_with_body "id" 'exit 1'
