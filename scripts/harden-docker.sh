@@ -25,8 +25,17 @@ fi
 echo "[INFO] Hardening Docker daemon configuration..."
 
 FORCE=false
+# --userns-remap=yes|no answers the remap prompt up front (for unattended runs)
+USERNS_REMAP_ANSWER=""
 for arg in "$@"; do
-    [[ "$arg" == "--force" ]] && FORCE=true
+    case "$arg" in
+        --force) FORCE=true ;;
+        --userns-remap=yes | --userns-remap=no) USERNS_REMAP_ANSWER="${arg#*=}" ;;
+        --userns-remap=*)
+            echo "[ERROR] --userns-remap must be 'yes' or 'no'" >&2
+            exit 2
+            ;;
+    esac
 done
 
 if [[ "$FORCE" == false ]] && [[ -f /etc/docker/daemon.json ]] && grep -q '"icc": false' /etc/docker/daemon.json 2> /dev/null; then
@@ -38,8 +47,12 @@ echo ""
 echo "User namespace remapping provides strong container isolation but can cause"
 echo "compatibility issues with volume permissions and existing containers."
 echo ""
-read -p "Enable user namespace remapping? (Y/n) " -n 1 -r
-echo ""
+if [[ -n "$USERNS_REMAP_ANSWER" ]]; then
+    REPLY="${USERNS_REMAP_ANSWER:0:1}"
+else
+    read -p "Enable user namespace remapping? (Y/n) " -n 1 -r
+    echo ""
+fi
 ENABLE_USERNS_REMAP=true
 if [[ $REPLY =~ ^[Nn]$ ]]; then
     ENABLE_USERNS_REMAP=false

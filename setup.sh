@@ -57,6 +57,9 @@ OPTIONS
                                 audit, auto-updates, harden-docker, apparmor, pam,
                                 aide, shm, fail2ban, email, bootloader, usb, ssh,
                                 mfa, observability
+  --userns-remap=yes|no       Answer the Docker user-namespace remapping prompt
+                                up front. Use 'no' for stacks that need host
+                                device access (e.g. USB passthrough).
   --skip=step1,step2,...      Skip the named step(s) entirely. Uses the same step
                                 names as --force. Useful for container environments
                                 where host-level steps (ntp, apparmor, bootloader,
@@ -319,11 +322,13 @@ run_full_setup() {
     local OBS_PROVIDER=""
     local OBS_KEY=""
     local OBS_ENDPOINT=""
+    local USERNS_REMAP_ARG=""
     for arg in "$@"; do
         case "$arg" in
             --force) FORCE_ALL=true ;;
             --force=*) FORCE_STEPS="${arg#*=}" ;;
             --skip=*) SKIP_STEPS="${arg#*=}" ;;
+            --userns-remap=*) USERNS_REMAP_ARG="$arg" ;;
             --observability=*) OBS_PROVIDER="${arg#*=}" ;;
             --observability-key=*) OBS_KEY="${arg#*=}" ;;
             --observability-endpoint=*) OBS_ENDPOINT="${arg#*=}" ;;
@@ -445,7 +450,7 @@ run_full_setup() {
     if ! _step_skipped "harden-docker" && [ -f "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" ]; then
         log_info "Hardening Docker daemon..."
         # shellcheck disable=SC2046
-        bash "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" $(_flag harden-docker)
+        bash "$DOCKERHOSTING_DIR/scripts/harden-docker.sh" $(_flag harden-docker) ${USERNS_REMAP_ARG:+"$USERNS_REMAP_ARG"}
     fi
 
     # Enable AppArmor mandatory access control
