@@ -923,14 +923,20 @@ A back-compatible alias is accepted: `--newrelic --newrelic-key=$NR_KEY`.
 
 The installer:
 1. Validates the licence-key format (provider-specific validator).
-2. Writes `/etc/observability/newrelic.env` (mode 600, root:root) with `NRIA_LICENSE_KEY=…`.
-3. Writes `/opt/observability/newrelic/docker-compose.yml`.
-4. Installs the generic systemd unit `observability-agent.service`.
-5. Configures the egress allowlist (see below).
-6. Enables and starts the unit; waits up to 60 s for the container to be running.
+2. Writes `/etc/observability/newrelic.env` (mode 600, root:root) with `NRIA_LICENSE_KEY=…`
+   and `NRIA_DISPLAY_NAME=$(hostname -f)`.
+3. Writes `/opt/observability/newrelic/docker-compose.yml`. The container shares the host
+   cgroup namespace (`cgroup: host`), which cgroup v2 hosts require for per-container metrics.
+4. Writes `/opt/observability/newrelic/docker-config.yml`, which is bind-mounted over the image's
+   nri-docker config to sample containers every 60 s instead of 15 s.
+5. Installs the generic systemd unit `observability-agent.service`.
+6. Configures the egress allowlist (see below).
+7. Enables and starts the unit; waits up to 60 s for the container to be running.
 
-The script is idempotent: re-running with the same key is a no-op; re-running
-with a different key updates the env file and restarts the service atomically.
+The script is idempotent. Re-running it is a no-op only when the key is unchanged **and** the
+deployed compose file (and, for New Relic, `docker-config.yml`) are byte-identical to the
+shipped templates. Otherwise it rewrites them and restarts the service, so pulling a template
+change and re-running setup is enough to deploy it without `--force`.
 
 ### Verify
 

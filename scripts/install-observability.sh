@@ -154,6 +154,18 @@ already_configured() {
     actual="$(cat "$env_file" 2> /dev/null || true)"
     [[ "$expected" == "$actual" ]] || return 1
 
+    # Deployed managed files must match their templates. Without this a
+    # template change never reached an already-configured host unless the
+    # operator knew to pass --force (c2a355a's ingest filters sat undeployed
+    # on production until 2026-09-19).
+    cmp -s "$OBS_TEMPLATE_DIR/${PROVIDER}.compose.template" "$compose_file" || return 1
+    case "$PROVIDER" in
+        newrelic)
+            cmp -s "$OBS_TEMPLATE_DIR/newrelic.docker-config.yml" \
+                "$OBS_OPT_DIR/newrelic/docker-config.yml" || return 1
+            ;;
+    esac
+
     # Service must be active
     systemctl is-active --quiet observability-agent.service 2> /dev/null || return 1
 
@@ -205,6 +217,20 @@ write_compose_file() {
 # --force is set.
 write_provider_extras() {
     case "$PROVIDER" in
+        newrelic)
+            # Managed like the compose file (always rewritten, compared by
+            # already_configured), not operator-preserved: it is bind-mounted
+            # by the compose template, which fails to start without it.
+            local src="$OBS_TEMPLATE_DIR/newrelic.docker-config.yml"
+            local dst="$OBS_OPT_DIR/newrelic/docker-config.yml"
+            if [[ ! -f "$src" ]]; then
+                log_error "Missing template: $src"
+                exit 1
+            fi
+            cp "$src" "$dst"
+            chmod 644 "$dst"
+            log_info "Wrote $dst (nri-docker interval override)"
+            ;;
         opentelemetry)
             local src="$OBS_TEMPLATE_DIR/opentelemetry.collector-config.yaml.template"
             local dst="$OBS_OPT_DIR/opentelemetry/config.yaml"
