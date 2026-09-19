@@ -1,0 +1,18 @@
+# nri-docker integration config — replaces the file baked into the
+# newrelic/infrastructure-bundle image at
+# /etc/newrelic-infra/integrations.d/docker-config.yml
+# Managed by dockerHosting — do not edit by hand. Bind-mounted read-only by
+# newrelic.compose.template; written by install-observability.sh.
+#
+# The image ships `interval: 15s`, which is 240 ContainerSample rows per
+# container per hour: the largest ingest line item on a Docker host. 60s cuts
+# that to a quarter. New Relic advises against sample periods above 60s,
+# because charts start to show gaps.
+#
+# The image's second entry (FARGATE) is dropped: these hosts are never Fargate.
+integrations:
+  - name: nri-docker
+    when:
+      feature: docker_enabled
+      file_exists: /var/run/docker.sock
+    interval: 60s

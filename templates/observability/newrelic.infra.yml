@@ -1,0 +1,33 @@
+# New Relic agent config: /etc/newrelic-infra.yml in the container.
+# Managed by dockerHosting — do not edit by hand. Bind-mounted read-only by
+# newrelic.compose.template; written by install-observability.sh.
+#
+# Only settings that CANNOT be set through NRIA_* variables live here. The
+# licence key, display name and sample rates stay in the environment, which
+# takes precedence over this file.
+#
+# network_interface_filters has no environment-variable form (New Relic's
+# configuration reference: "This setting lacks environment variable
+# support"). Passing it as NRIA_NETWORK_INTERFACE_FILTERS made the agent's
+# envconfig fail with "invalid map item" and abandon the WHOLE NRIA_*
+# environment, which silently dropped the display name and sample rates.
+#
+# The agent filters veth*, lo, etc. by default but not br-* or docker0. On a
+# Docker host that leaves every container bridge reporting: 17 of 18
+# interfaces on production were bridges nobody monitors. Setting this key
+# REPLACES the default list, so the stock prefixes are repeated deliberately.
+network_interface_filters:
+  prefix:
+    - dummy
+    - lo
+    - vmnet
+    - sit
+    - tun
+    - tap
+    - veth
+    - vether
+    - docker
+    - br-
+  index-1:
+    - tun
+    - tap
