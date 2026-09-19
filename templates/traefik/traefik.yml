@@ -11,8 +11,14 @@ entryPoints:
           to: websecure
           scheme: https
           permanent: true
+    forwardedHeaders:
+      trustedIPs:
+      # __CLOUDFLARE_TRUSTED_IPS__
   websecure:
     address: ":443"
+    forwardedHeaders:
+      trustedIPs:
+      # __CLOUDFLARE_TRUSTED_IPS__
   traefik:
     address: ":8080"
 
