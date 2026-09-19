@@ -369,3 +369,186 @@ EOF
     run check_nginx_migration
     [ "$status" -eq 0 ]
 }
+
+# ── render_traefik_config: Cloudflare trustedIPs injection ───────────────────
+
+@test "render_traefik_config: marker is fully replaced, no placeholder left" {
+    local out
+    out="$(render_traefik_config)"
+    [[ "$out" != *"__CLOUDFLARE_TRUSTED_IPS__"* ]]
+}
+
+@test "render_traefik_config: web entryPoint gets forwardedHeaders.trustedIPs with Cloudflare CIDRs" {
+    local out web_block
+    out="$(render_traefik_config)"
+    web_block="$(echo "$out" | awk '/^  web:/{f=1} /^  websecure:/{f=0} f')"
+    [[ "$web_block" == *"forwardedHeaders:"* ]]
+    [[ "$web_block" == *"trustedIPs:"* ]]
+    [[ "$web_block" == *"- 173.245.48.0/20"* ]]
+    [[ "$web_block" == *"- 2400:cb00::/32"* ]]
+}
+
+@test "render_traefik_config: websecure entryPoint gets forwardedHeaders.trustedIPs with Cloudflare CIDRs" {
+    local out ws_block
+    out="$(render_traefik_config)"
+    ws_block="$(echo "$out" | awk '/^  websecure:/{f=1} /^  traefik:/{f=0} f')"
+    [[ "$ws_block" == *"forwardedHeaders:"* ]]
+    [[ "$ws_block" == *"trustedIPs:"* ]]
+    [[ "$ws_block" == *"- 141.101.64.0/18"* ]]
+}
+
+@test "render_traefik_config: trustedIPs block appears exactly twice (once per entryPoint)" {
+    local out count
+    out="$(render_traefik_config)"
+    count="$(echo "$out" | grep -c "trustedIPs:")"
+    [ "$count" -eq 2 ]
+}
+
+@test "render_traefik_config: traefik entryPoint (dashboard) is untouched" {
+    local out
+    out="$(render_traefik_config)"
+    [[ "$out" == *'address: ":8080"'* ]]
+}
+
+@test "render_traefik_config: comment and blank lines in cloudflare-ips.txt are not emitted as entries" {
+    local custom="$BATS_TEST_TMPDIR/custom-ips.txt"
+    cat > "$custom" <<'EOF'
+# a header comment
+
+10.0.0.0/8
+
+
+# another comment
+192.168.0.0/16
+EOF
+    CLOUDFLARE_IPS_FILE="$custom"
+    local out
+    out="$(render_traefik_config)"
+    [[ "$out" == *"- 10.0.0.0/8"* ]]
+    [[ "$out" == *"- 192.168.0.0/16"* ]]
+    [[ "$out" != *"a header comment"* ]]
+    [[ "$out" != *"another comment"* ]]
+    local count
+    count="$(echo "$out" | grep -c "trustedIPs:")"
+    [ "$count" -eq 2 ]
+    local ip_lines
+    ip_lines="$(echo "$out" | grep -c -- '- 10.0.0.0/8')"
+    [ "$ip_lines" -eq 2 ]
+}
+
+@test "write_configs: written traefik.yml has trustedIPs for both entrypoints" {
+    write_configs
+    local content
+    content="$(cat "$TRAEFIK_DIR/traefik.yml")"
+    [[ "$content" != *"__CLOUDFLARE_TRUSTED_IPS__"* ]]
+    local count
+    count="$(echo "$content" | grep -c "trustedIPs:")"
+    [ "$count" -eq 2 ]
+}
+
+# ── config_drifted ────────────────────────────────────────────────────────────
+
+@test "config_drifted: true when deployed traefik.yml is missing" {
+    rm -f "$TRAEFIK_DIR/traefik.yml"
+    run config_drifted
+    [ "$status" -eq 0 ]
+}
+
+@test "config_drifted: true when deployed traefik.yml differs from current template render" {
+    echo "stale config from a previous version" > "$TRAEFIK_DIR/traefik.yml"
+    run config_drifted
+    [ "$status" -eq 0 ]
+}
+
+@test "config_drifted: false when deployed traefik.yml matches current template render" {
+    render_traefik_config > "$TRAEFIK_DIR/traefik.yml"
+    run config_drifted
+    [ "$status" -eq 1 ]
+}
+
+# ── main(): deploy-drift reinstall ────────────────────────────────────────────
+# Full-process invocation (main() only runs when the script is executed, not
+# sourced) with the EUID root check patched out, matching the pattern used by
+# tests/test_install_observability.bats.
+
+_patch_and_run_main() {
+    local patched="$BATS_TEST_TMPDIR/install-traefik-patched.sh"
+    sed -e 's/if \[\[ "$EUID" -ne 0 \]\]/if false/' \
+        "$SCRIPTS_DIR/install-traefik.sh" > "$patched"
+    chmod +x "$patched"
+    run bash "$patched"
+}
+
+_mock_docker_running_v36() {
+    local log="$1"
+    cat > "$MOCK_BIN/docker" <<MOCK_BODY
+#!/bin/bash
+echo "\$*" >> "$log"
+case "\$*" in
+    *"--format {{.Config.Image}}"*) echo "traefik:v3.6" ;;
+    *"--format {{.State.Running}}"*) echo "true" ;;
+esac
+exit 0
+MOCK_BODY
+    chmod +x "$MOCK_BIN/docker"
+}
+
+@test "main: no drift — already-running Traefik is left alone (no container restart)" {
+    local docker_log="$BATS_TEST_TMPDIR/docker-main.log"
+    _mock_docker_running_v36 "$docker_log"
+    render_traefik_config > "$TRAEFIK_DIR/traefik.yml"
+
+    _patch_and_run_main
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already running"* ]]
+    ! grep -q "rm -f traefik" "$docker_log"
+}
+
+@test "main: config drift on a running Traefik triggers a non-interactive reinstall" {
+    local docker_log="$BATS_TEST_TMPDIR/docker-main.log"
+    _mock_docker_running_v36 "$docker_log"
+    create_mock_with_body "ufw" 'echo "Status: active"; exit 0'
+
+    echo "entryPoints:
+  web:
+    address: \":80\"" > "$TRAEFIK_DIR/traefik.yml"
+
+    mkdir -p "$TRAEFIK_DYNAMIC_DIR"
+    printf 'username: admin\npassword: preexistingpassword1234567890\n' \
+        > "$TRAEFIK_DIR/dashboard-credentials"
+    echo "preexisting-dashboard-config" > "$TRAEFIK_DYNAMIC_DIR/dashboard.yml"
+
+    _patch_and_run_main
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"drift"* ]]
+    [[ "$output" != *"UFW is active"* ]]
+    grep -q "rm -f traefik" "$docker_log"
+    assert_file_contains "$TRAEFIK_DIR/traefik.yml" "trustedIPs:"
+}
+
+@test "main: drift reinstall does not prompt (no ufw warning reaches output)" {
+    local docker_log="$BATS_TEST_TMPDIR/docker-main.log"
+    _mock_docker_running_v36 "$docker_log"
+    create_mock_with_body "ufw" 'echo "Status: active"; exit 0'
+    echo "stale" > "$TRAEFIK_DIR/traefik.yml"
+
+    _patch_and_run_main
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Options:"* ]] || [[ "$output" != *"UFW is active"* ]]
+}
+
+@test "main: drift reinstall preserves existing dashboard credentials (no rotation)" {
+    local docker_log="$BATS_TEST_TMPDIR/docker-main.log"
+    _mock_docker_running_v36 "$docker_log"
+    echo "stale" > "$TRAEFIK_DIR/traefik.yml"
+
+    mkdir -p "$TRAEFIK_DYNAMIC_DIR"
+    printf 'username: admin\npassword: preexistingpassword1234567890\n' \
+        > "$TRAEFIK_DIR/dashboard-credentials"
+    echo "preexisting-dashboard-config" > "$TRAEFIK_DYNAMIC_DIR/dashboard.yml"
+
+    _patch_and_run_main
+    [ "$status" -eq 0 ]
+    assert_file_contains "$TRAEFIK_DIR/dashboard-credentials" "preexistingpassword1234567890"
+    assert_file_contains "$TRAEFIK_DYNAMIC_DIR/dashboard.yml" "preexisting-dashboard-config"
+}

@@ -26,6 +26,7 @@ DEPLOYED_APPS_DIR="${DEPLOYED_APPS_DIR:-/opt/apps}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="${TEMPLATE_DIR:-$(dirname "$SCRIPT_DIR")/templates}"
+CLOUDFLARE_IPS_FILE="${CLOUDFLARE_IPS_FILE:-$TEMPLATE_DIR/traefik/cloudflare-ips.txt}"
 
 # Parse flags
 MIGRATE_NGINX=""
@@ -36,6 +37,12 @@ for arg in "$@"; do
         --force) FORCE=true ;;
     esac
 done
+
+# Set by main() when an already-running Traefik's deployed static config has
+# drifted from the template (e.g. the Cloudflare IP list was updated). A
+# drift reinstall must be unattended and must not rotate the dashboard
+# password — see write_configs() and main().
+DRIFT_REINSTALL=false
 
 # Colors
 RED='\033[0;31m'
@@ -295,17 +302,73 @@ prompt_firewall_8080() {
     esac
 }
 
+# ── Cloudflare trusted IPs (static config, no file-provider hot-reload) ──────
+#
+# Traefik's forwardedHeaders.trustedIPs lives in the STATIC config, which
+# Traefik only reads at startup — unlike the dynamic file provider, it can't
+# be dropped into $TRAEFIK_DYNAMIC_DIR and picked up live. So the Cloudflare
+# CIDR list is spliced into templates/traefik/traefik.yml at write_configs
+# time, replacing the "# __CLOUDFLARE_TRUSTED_IPS__" marker under each
+# entryPoint's trustedIPs: key.
+
+# Emits one "- <cidr>" line per non-comment, non-blank line of
+# $CLOUDFLARE_IPS_FILE, at the given indent.
+_render_trusted_ips_block() {
+    local indent="$1" ip
+    while IFS= read -r ip; do
+        [[ -z "$ip" || "$ip" == \#* ]] && continue
+        printf '%s- %s\n' "$indent" "$ip"
+    done < "$CLOUDFLARE_IPS_FILE"
+}
+
+# Renders the full static config to stdout: the traefik.yml template with
+# every "# __CLOUDFLARE_TRUSTED_IPS__" marker line (one per entryPoint)
+# expanded to the Cloudflare CIDR list. Used both to write the deployed
+# config and, by config_drifted(), to detect when it needs rewriting.
+render_traefik_config() {
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == *"__CLOUDFLARE_TRUSTED_IPS__"* ]]; then
+            _render_trusted_ips_block "        "
+        else
+            printf '%s\n' "$line"
+        fi
+    done < "$TEMPLATE_DIR/traefik/traefik.yml"
+}
+
+# True (0) if the deployed traefik.yml differs from what the current
+# template + Cloudflare IP file would render — e.g. after the IP list is
+# re-vendored, or the template changes. main() uses this so a config change
+# on an already-running host doesn't get stuck behind the image-tag check
+# forever (the deploy-drift flaw: matching image tag alone used to mean
+# "skip", even when the static config on disk was stale).
+config_drifted() {
+    [[ -f "$TRAEFIK_DIR/traefik.yml" ]] || return 0
+    local expected actual
+    expected="$(render_traefik_config)"
+    actual="$(cat "$TRAEFIK_DIR/traefik.yml" 2> /dev/null || true)"
+    [[ "$expected" == "$actual" ]] && return 1
+    return 0
+}
+
 write_configs() {
     log_info "Writing Traefik static config..."
-    cp "$TEMPLATE_DIR/traefik/traefik.yml" "$TRAEFIK_DIR/traefik.yml"
+    render_traefik_config > "$TRAEFIK_DIR/traefik.yml"
     chmod 644 "$TRAEFIK_DIR/traefik.yml"
 
     log_info "Writing shared middleware config..."
     cp "$TEMPLATE_DIR/traefik/middleware.yml" "$TRAEFIK_DYNAMIC_DIR/middleware.yml"
     chmod 644 "$TRAEFIK_DYNAMIC_DIR/middleware.yml"
 
-    generate_dashboard_password
-    write_dashboard_config
+    # A drift-triggered reinstall re-renders the static config but must not
+    # rotate the operator's existing dashboard password.
+    if [[ "$DRIFT_REINSTALL" == true ]] && [[ -f "$TRAEFIK_DIR/dashboard-credentials" ]]; then
+        log_info "Drift reinstall — preserving existing dashboard credentials"
+        DASHBOARD_PASSWORD=$(grep "^password:" "$TRAEFIK_DIR/dashboard-credentials" | awk '{print $2}')
+    else
+        generate_dashboard_password
+        write_dashboard_config
+    fi
 }
 
 start_traefik() {
@@ -354,17 +417,29 @@ main() {
         exit 1
     fi
 
-    local running_image
+    local running_image already_running=false
     running_image=$(docker inspect traefik --format '{{.Config.Image}}' 2> /dev/null || true)
-    if [[ "$FORCE" == false ]] &&
-        [[ "$running_image" == "traefik:${TRAEFIK_VERSION}" ]] &&
+    if [[ "$running_image" == "traefik:${TRAEFIK_VERSION}" ]] &&
         docker inspect traefik --format '{{.State.Running}}' 2> /dev/null | grep -q "true"; then
-        log_info "Traefik ${TRAEFIK_VERSION} is already running — skipping (use --force to reinstall)"
-        exit 0
+        already_running=true
+    fi
+
+    if [[ "$FORCE" == false ]] && [[ "$already_running" == true ]]; then
+        if config_drifted; then
+            log_warn "Traefik ${TRAEFIK_VERSION} is running but its static config has drifted from the template — reinstalling non-interactively"
+            DRIFT_REINSTALL=true
+        else
+            log_info "Traefik ${TRAEFIK_VERSION} is already running — skipping (use --force to reinstall)"
+            exit 0
+        fi
     fi
 
     log_info "Installing Traefik ${TRAEFIK_VERSION}..."
-    check_nginx_migration
+    if [[ "$DRIFT_REINSTALL" == true ]]; then
+        log_info "Drift-triggered reinstall on an existing Traefik host — skipping nginx-migration check"
+    else
+        check_nginx_migration
+    fi
 
     mkdir -p "$TRAEFIK_DYNAMIC_DIR" "$TRAEFIK_CERTS_DIR"
     chmod 750 "$TRAEFIK_DIR"
@@ -372,7 +447,11 @@ main() {
     write_configs
     start_traefik
     verify_traefik
-    prompt_firewall_8080
+    if [[ "$DRIFT_REINSTALL" == true ]]; then
+        log_info "Drift-triggered reinstall — skipping firewall prompt (re-run with --force interactively to review firewall rules)"
+    else
+        prompt_firewall_8080
+    fi
 
     echo ""
     log_info "════════════════════════════════════════════"
