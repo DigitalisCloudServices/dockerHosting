@@ -928,7 +928,11 @@ The installer:
 3. Writes `/opt/observability/newrelic/docker-compose.yml`. The container shares the host
    cgroup namespace (`cgroup: host`), which cgroup v2 hosts require for per-container metrics.
 4. Writes `/opt/observability/newrelic/docker-config.yml`, which is bind-mounted over the image's
-   nri-docker config to sample containers every 60 s instead of 15 s.
+   nri-docker config to sample containers every 60 s instead of 15 s. Also writes
+   `/opt/observability/newrelic/newrelic-infra.yml`, mounted as the agent's `/etc/newrelic-infra.yml`,
+   for settings that have no `NRIA_*` form (`network_interface_filters`, which drops the `br-*` and
+   `docker0` bridges). Never pass those as environment variables: one unparseable `NRIA_*` value
+   makes the agent discard its entire environment configuration.
 5. Installs the generic systemd unit `observability-agent.service`.
 6. Configures the egress allowlist (see below).
 7. Enables and starts the unit; waits up to 60 s for the container to be running.
