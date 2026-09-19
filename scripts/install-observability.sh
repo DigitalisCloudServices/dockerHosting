@@ -133,6 +133,18 @@ render_env_content() {
 
 # ── idempotency check ───────────────────────────────────────────────────────
 
+# Managed per-provider files beyond the compose file, one "<template> <dest>"
+# pair per line; <dest> is relative to $OBS_OPT_DIR/<provider>/. The compose
+# template bind-mounts each <dest>, so the two lists must agree.
+managed_extras() {
+    case "$PROVIDER" in
+        newrelic)
+            echo "newrelic.docker-config.yml docker-config.yml"
+            echo "newrelic.infra.yml newrelic-infra.yml"
+            ;;
+    esac
+}
+
 # Returns 0 if the existing install matches the requested state and we can exit.
 already_configured() {
     [[ "$FORCE" == true ]] && return 1
@@ -153,6 +165,16 @@ already_configured() {
     expected="$(render_env_content)"
     actual="$(cat "$env_file" 2> /dev/null || true)"
     [[ "$expected" == "$actual" ]] || return 1
+
+    # Deployed managed files must match their templates. Without this a
+    # template change never reached an already-configured host unless the
+    # operator knew to pass --force (c2a355a's ingest filters sat undeployed
+    # on production until 2026-09-19).
+    cmp -s "$OBS_TEMPLATE_DIR/${PROVIDER}.compose.template" "$compose_file" || return 1
+    local tmpl dest
+    while read -r tmpl dest; do
+        cmp -s "$OBS_TEMPLATE_DIR/$tmpl" "$OBS_OPT_DIR/$PROVIDER/$dest" || return 1
+    done < <(managed_extras)
 
     # Service must be active
     systemctl is-active --quiet observability-agent.service 2> /dev/null || return 1
@@ -204,6 +226,21 @@ write_compose_file() {
 # than the shipped template, so we only write these on first install or when
 # --force is set.
 write_provider_extras() {
+    # Managed extras: always rewritten and compared by already_configured,
+    # like the compose file, because the compose template bind-mounts them
+    # and fails to start without them.
+    local tmpl dest
+    while read -r tmpl dest; do
+        if [[ ! -f "$OBS_TEMPLATE_DIR/$tmpl" ]]; then
+            log_error "Missing template: $OBS_TEMPLATE_DIR/$tmpl"
+            exit 1
+        fi
+        cp "$OBS_TEMPLATE_DIR/$tmpl" "$OBS_OPT_DIR/$PROVIDER/$dest"
+        chmod 644 "$OBS_OPT_DIR/$PROVIDER/$dest"
+        log_info "Wrote $OBS_OPT_DIR/$PROVIDER/$dest"
+    done < <(managed_extras)
+
+    # Operator-preserved extras.
     case "$PROVIDER" in
         opentelemetry)
             local src="$OBS_TEMPLATE_DIR/opentelemetry.collector-config.yaml.template"

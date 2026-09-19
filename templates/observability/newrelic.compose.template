@@ -17,11 +17,25 @@ services:
     # userns_mode: host is required because the Linux kernel forbids combining
     # userns-remap (daemon.json: "userns-remap":"default") with host networking.
     userns_mode: "host"
+    # cgroup: host is required on cgroup v2 hosts (Debian 13 is cgroup2fs),
+    # where Docker defaults to a PRIVATE cgroup namespace. With a private
+    # namespace the agent sees only its own namespace root: every other
+    # container's ContainerSample reports 0 for CPU/memory/network, and this
+    # container's row reports whole-host totals under the name newrelic-infra.
+    # Verified on production 2026-09-19. New Relic's containerised-agent docs:
+    # "--cgroupns=host ... required when using docker on cgroup v2".
+    cgroup: host
     cap_add: [SYS_PTRACE]
     privileged: false
     volumes:
       - "/:/host:ro"
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      # Replaces the image's baked-in nri-docker config to set its interval;
+      # see templates/observability/newrelic.docker-config.yml.
+      - "./docker-config.yml:/etc/newrelic-infra/integrations.d/docker-config.yml:ro"
+      # Agent YAML for settings with no NRIA_* form (network_interface_filters);
+      # see templates/observability/newrelic.infra.yml.
+      - "./newrelic-infra.yml:/etc/newrelic-infra.yml:ro"
     env_file:
       - /etc/observability/newrelic.env
     environment:
@@ -35,21 +49,21 @@ services:
       # therefore reported with no display name at all.
       #
       # ── Ingest reduction ────────────────────────────────────────────────
-      # The agent filters veth* and lo by default but NOT br-* or docker0. On
-      # a Docker host that leaves every container bridge reporting every 5s:
-      # measured 17 of 18 reporting interfaces were bridges nobody monitors,
-      # ~9 GB/month against a 100 GB allowance. Setting this key REPLACES the
-      # default list, so the stock prefixes are repeated deliberately.
-      NRIA_NETWORK_INTERFACE_FILTERS: '{"prefix":["dummy","lo","vether","veth","docker","br-"],"index-1":["tun"]}'
+      # Bridge-interface filtering (br-*, docker0) lives in newrelic-infra.yml:
+      # network_interface_filters has no NRIA_* form, and setting it here made
+      # envconfig reject the entire environment block, this comment's
+      # neighbours included. Do NOT add it back as an env var.
+      #
       # Sample rates in seconds. SystemSample backs the live host alerts, so
       # it is slowed rather than gutted; network and storage go to 1 minute.
       NRIA_METRICS_NETWORK_SAMPLE_RATE: 60
       NRIA_METRICS_STORAGE_SAMPLE_RATE: 60
       NRIA_METRICS_SYSTEM_SAMPLE_RATE: 30
-      # NOTE: ContainerSample (~13 GB/month, the largest single line item) is
-      # NOT tunable here. nri-docker's 15s interval is baked into the image at
-      # /etc/newrelic-infra/integrations.d/docker-config.yml and needs a
-      # bind-mounted override to change. Deliberately left alone.
+      # ContainerSample (~13 GB/month, the largest single line item) is not
+      # tunable through NRIA_* variables: nri-docker's interval lives in
+      # /etc/newrelic-infra/integrations.d/docker-config.yml, which the
+      # volume above replaces (15s -> 60s, a quarter of the rows). Until
+      # cgroup: host was added, every one of those rows was zeros.
     logging:
       driver: json-file
       options:

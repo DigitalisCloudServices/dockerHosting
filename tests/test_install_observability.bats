@@ -190,6 +190,61 @@ teardown() {
     assert_file_contains "$OBS_OPT_DIR/newrelic/docker-compose.yml" 'userns_mode: "host"'
 }
 
+@test "install-observability: newrelic compose shares the host cgroup namespace" {
+    # cgroup v2 hosts give containers a private cgroupns by default; the agent
+    # then reads its own namespace root, reporting 0 for every container and
+    # host-wide totals for itself. New Relic: --cgroupns=host is required.
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-compose.yml" 'cgroup: host'
+}
+
+@test "install-observability: newrelic install writes the nri-docker interval override" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    assert_file_exists "$OBS_OPT_DIR/newrelic/docker-config.yml"
+    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-config.yml" 'name: nri-docker'
+    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-config.yml" 'interval: 60s'
+}
+
+@test "install-observability: newrelic compose mounts the nri-docker override over the baked-in file" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-compose.yml" \
+        './docker-config.yml:/etc/newrelic-infra/integrations.d/docker-config.yml:ro'
+}
+
+@test "install-observability: newrelic compose does not pass interface filters as an env var" {
+    # network_interface_filters has no env-var support. The agent's envconfig
+    # rejected the JSON value on production ("invalid map item") and abandoned
+    # the whole NRIA_* environment: display name and sample rates included.
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    run grep -c 'NRIA_NETWORK_INTERFACE_FILTERS:' "$OBS_OPT_DIR/newrelic/docker-compose.yml"
+    [ "$output" = "0" ]
+}
+
+@test "install-observability: newrelic install writes agent YAML with the interface filters" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    assert_file_exists "$OBS_OPT_DIR/newrelic/newrelic-infra.yml"
+    assert_file_contains "$OBS_OPT_DIR/newrelic/newrelic-infra.yml" 'network_interface_filters:'
+    assert_file_contains "$OBS_OPT_DIR/newrelic/newrelic-infra.yml" '- br-'
+    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-compose.yml" \
+        './newrelic-infra.yml:/etc/newrelic-infra.yml:ro'
+}
+
+@test "install-observability: idempotency check fails when the agent YAML has drifted" {
+    cat > "$MOCK_BIN/systemctl" <<MOCK_BODY
+#!/bin/bash
+echo "\$*" >> "$SYSTEMCTL_LOG"
+exit 0
+MOCK_BODY
+    chmod +x "$MOCK_BIN/systemctl"
+
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    echo "# hand edit" >> "$OBS_OPT_DIR/newrelic/newrelic-infra.yml"
+
+    run bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"already configured and running"* ]]
+}
+
 @test "install-observability: writes systemd unit file" {
     bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
     assert_file_exists "$OBS_SYSTEMD_DIR/observability-agent.service"
@@ -361,6 +416,44 @@ MOCK_BODY
     [ "$status" -eq 0 ]
     [[ "$output" != *"already configured and running"* ]]
     assert_file_contains "$OBS_ETC_DIR/newrelic.env" "$OTHER_KEY"
+}
+
+@test "install-observability: idempotency check fails when the deployed compose has drifted from the template" {
+    # Regression: a template change (e.g. c2a355a's ingest filters) never
+    # reached a host that was already configured, because only the env file
+    # was compared. Same key, stale compose => must reinstall.
+    cat > "$MOCK_BIN/systemctl" <<MOCK_BODY
+#!/bin/bash
+echo "\$*" >> "$SYSTEMCTL_LOG"
+exit 0
+MOCK_BODY
+    chmod +x "$MOCK_BIN/systemctl"
+
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    echo "# stale copy from an older template" >> "$OBS_OPT_DIR/newrelic/docker-compose.yml"
+
+    run bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"already configured and running"* ]]
+    run grep -c "stale copy" "$OBS_OPT_DIR/newrelic/docker-compose.yml"
+    [ "$output" = "0" ]
+}
+
+@test "install-observability: idempotency check fails when the nri-docker override is missing" {
+    cat > "$MOCK_BIN/systemctl" <<MOCK_BODY
+#!/bin/bash
+echo "\$*" >> "$SYSTEMCTL_LOG"
+exit 0
+MOCK_BODY
+    chmod +x "$MOCK_BIN/systemctl"
+
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    rm -f "$OBS_OPT_DIR/newrelic/docker-config.yml"
+
+    run bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"already configured and running"* ]]
+    assert_file_exists "$OBS_OPT_DIR/newrelic/docker-config.yml"
 }
 
 # ── provider switching ─────────────────────────────────────────────────────
