@@ -9,7 +9,7 @@
 
 services:
   newrelic-infra:
-    image: newrelic/infrastructure-bundle:3.3.26
+    image: newrelic/infrastructure-bundle:3.4.0
     container_name: newrelic-infra
     restart: unless-stopped
     network_mode: host
