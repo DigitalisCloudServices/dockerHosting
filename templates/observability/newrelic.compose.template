@@ -30,9 +30,18 @@ services:
     volumes:
       - "/:/host:ro"
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      # Replaces the image's baked-in nri-docker config to set its interval;
-      # see templates/observability/newrelic.docker-config.yml.
-      - "./docker-config.yml:/etc/newrelic-infra/integrations.d/docker-config.yml:ro"
+      # Replaces the image's integrations.d. It holds docker-config.yml (the
+      # nri-docker interval; see templates/observability/newrelic.docker-config.yml)
+      # and any <site>-*.yml a site drops in. The agent ignores subfolders of
+      # integrations.d, so site configs must live in this one folder; it
+      # reloads on change, with no restart.
+      - "./integrations.d:/etc/newrelic-infra/integrations.d:ro"
+      # Site secrets (e.g. a monitoring account's password), root-only on the
+      # host. A site config references them as /etc/newrelic-infra/secrets.d/<file>.
+      - "/etc/observability/newrelic.d:/etc/newrelic-infra/secrets.d:ro"
+      # Runs nri-mysql against a database container on an internal Docker
+      # network; see templates/observability/newrelic.nri-mysql-docker.sh.
+      - "./nri-mysql-docker.sh:/etc/newrelic-infra/bin/nri-mysql-docker.sh:ro"
       # Agent YAML for settings with no NRIA_* form (network_interface_filters);
       # see templates/observability/newrelic.infra.yml.
       - "./newrelic-infra.yml:/etc/newrelic-infra.yml:ro"

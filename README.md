@@ -952,8 +952,8 @@ The installer:
    and `NRIA_DISPLAY_NAME=$(hostname -f)`.
 3. Writes `/opt/observability/newrelic/docker-compose.yml`. The container shares the host
    cgroup namespace (`cgroup: host`), which cgroup v2 hosts require for per-container metrics.
-4. Writes `/opt/observability/newrelic/docker-config.yml`, which is bind-mounted over the image's
-   nri-docker config to sample containers every 60 s instead of 15 s. Also writes
+4. Writes `/opt/observability/newrelic/integrations.d/docker-config.yml`; the folder is mounted as
+   the agent's `integrations.d`, and this file samples containers every 60 s instead of 15 s. Also writes
    `/opt/observability/newrelic/newrelic-infra.yml`, mounted as the agent's `/etc/newrelic-infra.yml`,
    for settings that have no `NRIA_*` form (`network_interface_filters`, which drops the `br-*` and
    `docker0` bridges). Never pass those as environment variables: one unparseable `NRIA_*` value
@@ -963,9 +963,48 @@ The installer:
 7. Enables and starts the unit; waits up to 60 s for the container to be running.
 
 The script is idempotent. Re-running it is a no-op only when the key is unchanged **and** the
-deployed compose file (and, for New Relic, `docker-config.yml`) are byte-identical to the
-shipped templates. Otherwise it rewrites them and restarts the service, so pulling a template
-change and re-running setup is enough to deploy it without `--force`.
+deployed compose file (and, for New Relic, `docker-config.yml`, `newrelic-infra.yml` and
+`nri-mysql-docker.sh`) are byte-identical to the shipped templates. Otherwise it rewrites them and
+restarts the service, so pulling a template change and re-running setup is enough to deploy it
+without `--force`.
+
+### Site integrations (New Relic)
+
+A site can have the host agent run an on-host integration, such as `nri-mysql` for its database,
+without editing anything dockerHosting manages:
+
+| Host path | In the agent | Holds |
+|---|---|---|
+| `/opt/observability/newrelic/integrations.d/<site>-*.yml` | `/etc/newrelic-infra/integrations.d/` | the site's integration config |
+| `/etc/observability/newrelic.d/` (root, mode 700) | `/etc/newrelic-infra/secrets.d/` | secrets the config references by path |
+| `/opt/observability/newrelic/nri-mysql-docker.sh` | `/etc/newrelic-infra/bin/nri-mysql-docker.sh` | the database wrapper, below |
+
+The agent reloads a changed config without a restart. It does **not** read subfolders of
+`integrations.d`, so site files sit next to `docker-config.yml`; name them with the site as a prefix.
+Reinstalling the agent leaves them alone.
+
+**Databases on internal Docker networks.** The agent runs on the host network. Its docker discovery
+finds no IP for a container attached only to user-defined networks, and those IPs change when a
+container is recreated, so an IP can be neither discovered nor written into the config.
+`nri-mysql-docker.sh` resolves the container's IP on a named network from the Docker API on every
+run, reads the password from a file, and runs `nri-mysql`:
+
+```yaml
+integrations:
+  - name: nri-mysql
+    exec: [/bin/sh, /etc/newrelic-infra/bin/nri-mysql-docker.sh]
+    interval: 60s
+    env:
+      MARIADB_CONTAINER: mysite-mariadb-primary-1
+      MARIADB_NETWORK: mysite_net_db
+      MARIADB_PASSWORD_FILE: /etc/newrelic-infra/secrets.d/mysite-mariadb.password
+      USERNAME: newrelic
+      PORT: 3306
+      ENABLE_TLS: true
+      REMOTE_MONITORING: true
+```
+
+VelaAir writes its own through `db-sync` (VelaAir F1359).
 
 ### Verify
 

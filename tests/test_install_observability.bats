@@ -200,15 +200,38 @@ teardown() {
 
 @test "install-observability: newrelic install writes the nri-docker interval override" {
     bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
-    assert_file_exists "$OBS_OPT_DIR/newrelic/docker-config.yml"
-    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-config.yml" 'name: nri-docker'
-    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-config.yml" 'interval: 60s'
+    assert_file_exists "$OBS_OPT_DIR/newrelic/integrations.d/docker-config.yml"
+    assert_file_contains "$OBS_OPT_DIR/newrelic/integrations.d/docker-config.yml" 'name: nri-docker'
+    assert_file_contains "$OBS_OPT_DIR/newrelic/integrations.d/docker-config.yml" 'interval: 60s'
 }
 
-@test "install-observability: newrelic compose mounts the nri-docker override over the baked-in file" {
+@test "install-observability: newrelic compose mounts integrations.d over the baked-in folder" {
+    # The agent does not read subfolders of integrations.d, so a site's
+    # integration config has to sit next to docker-config.yml in one folder.
     bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
     assert_file_contains "$OBS_OPT_DIR/newrelic/docker-compose.yml" \
-        './docker-config.yml:/etc/newrelic-infra/integrations.d/docker-config.yml:ro'
+        './integrations.d:/etc/newrelic-infra/integrations.d:ro'
+}
+
+@test "install-observability: newrelic keeps a site's integration config across a reinstall" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    echo "integrations: []" > "$OBS_OPT_DIR/newrelic/integrations.d/site-mysql.yml"
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY" --force
+    assert_file_contains "$OBS_OPT_DIR/newrelic/integrations.d/site-mysql.yml" 'integrations: []'
+}
+
+@test "install-observability: newrelic mounts a root-only folder for site secrets" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    [ -d "$OBS_ETC_DIR/newrelic.d" ]
+    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-compose.yml" \
+        '/etc/observability/newrelic.d:/etc/newrelic-infra/secrets.d:ro'
+}
+
+@test "install-observability: newrelic ships the nri-mysql container wrapper" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    assert_file_exists "$OBS_OPT_DIR/newrelic/nri-mysql-docker.sh"
+    assert_file_contains "$OBS_OPT_DIR/newrelic/docker-compose.yml" \
+        './nri-mysql-docker.sh:/etc/newrelic-infra/bin/nri-mysql-docker.sh:ro'
 }
 
 @test "install-observability: newrelic compose does not pass interface filters as an env var" {
@@ -448,12 +471,12 @@ MOCK_BODY
     chmod +x "$MOCK_BIN/systemctl"
 
     bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
-    rm -f "$OBS_OPT_DIR/newrelic/docker-config.yml"
+    rm -f "$OBS_OPT_DIR/newrelic/integrations.d/docker-config.yml"
 
     run bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
     [ "$status" -eq 0 ]
     [[ "$output" != *"already configured and running"* ]]
-    assert_file_exists "$OBS_OPT_DIR/newrelic/docker-config.yml"
+    assert_file_exists "$OBS_OPT_DIR/newrelic/integrations.d/docker-config.yml"
 }
 
 # ── provider switching ─────────────────────────────────────────────────────
