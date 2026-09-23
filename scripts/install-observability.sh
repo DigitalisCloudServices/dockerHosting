@@ -139,8 +139,9 @@ render_env_content() {
 managed_extras() {
     case "$PROVIDER" in
         newrelic)
-            echo "newrelic.docker-config.yml docker-config.yml"
+            echo "newrelic.docker-config.yml integrations.d/docker-config.yml"
             echo "newrelic.infra.yml newrelic-infra.yml"
+            echo "newrelic.nri-mysql-docker.sh nri-mysql-docker.sh"
             ;;
     esac
 }
@@ -188,6 +189,14 @@ write_dirs() {
     install -d -m 700 -o root -g root "$OBS_ETC_DIR"
     install -d -m 755 -o root -g root "$OBS_OPT_DIR"
     install -d -m 755 -o root -g root "$OBS_OPT_DIR/$PROVIDER"
+    case "$PROVIDER" in
+        newrelic)
+            # Site integration configs, and site secrets they reference;
+            # both are bind-mounted by the compose template.
+            install -d -m 755 -o root -g root "$OBS_OPT_DIR/$PROVIDER/integrations.d"
+            install -d -m 700 -o root -g root "$OBS_ETC_DIR/newrelic.d"
+            ;;
+    esac
 }
 
 write_provider_marker() {
