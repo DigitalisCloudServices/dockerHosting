@@ -87,6 +87,24 @@ cd "$(dirname "$0")/.."
 echo "[INFO] Restarting Docker Compose services..."
 sudo docker compose restart "$@"
 echo "[INFO] Services restarted successfully"
+
+# Run the migration lifecycle hook immediately after restart (post-start trigger).
+# The admin cron is the per-minute fallback; this is the primary lifecycle trigger.
+# Waits for /tmp/cron-env.sh — written by the admin entrypoint once Vault
+# credentials are loaded — then invokes migration-cron.sh synchronously.
+echo "[INFO] Waiting for admin container Vault credentials..."
+DEADLINE=$(( $(date +%s) + 120 ))
+while ! sudo docker compose exec -T admin test -f /tmp/cron-env.sh 2>/dev/null; do
+    if [[ $(date +%s) -ge ${DEADLINE} ]]; then
+        echo "[WARN] Admin container not ready after 120s — migration lifecycle hook skipped."
+        exit 0
+    fi
+    sleep 3
+done
+
+echo "[INFO] Running migration lifecycle hook..."
+sudo docker compose exec -T admin /tmp/cron-env.sh /bin/bash /opt/cron.d/migration-cron.sh
+echo "[INFO] Migration hook complete."
 SCRIPT_EOF
 
 # Helper: docker-logs
