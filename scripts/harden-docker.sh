@@ -68,9 +68,23 @@ if [ -f /etc/docker/daemon.json ]; then
     echo "[INFO] Backed up existing daemon.json"
 fi
 
+# Keep the image store Docker already uses. Switching it hides every existing image
+# and container: Docker 29 puts new installs on the containerd image store, older
+# installs are on overlay2. With Docker not running, leave the choice to Docker.
+current_store=$(docker info --format '{{.Driver}} {{json .DriverStatus}}' 2> /dev/null || true)
+STORAGE_LINE=""
+SNAPSHOTTER_LINE=""
+if [[ "$current_store" == *io.containerd.snapshotter* ]]; then
+    SNAPSHOTTER_LINE=$',\n    "containerd-snapshotter": true'
+    echo "[INFO] Keeping the containerd image store"
+elif [[ "$current_store" == overlay2* ]]; then
+    STORAGE_LINE=$'\n  "storage-driver": "overlay2",'
+    echo "[INFO] Keeping the overlay2 storage driver"
+fi
+
 # Create comprehensive hardened daemon.json
 if [ "$ENABLE_USERNS_REMAP" = true ]; then
-    cat > /etc/docker/daemon.json << 'EOF'
+    cat > /etc/docker/daemon.json << EOF
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -90,11 +104,10 @@ if [ "$ENABLE_USERNS_REMAP" = true ]; then
   },
   "selinux-enabled": false,
   "userns-remap": "default",
-  "default-shm-size": "64M",
-  "storage-driver": "overlay2",
+  "default-shm-size": "64M",${STORAGE_LINE}
   "exec-opts": ["native.cgroupdriver=systemd"],
   "features": {
-    "buildkit": true
+    "buildkit": true${SNAPSHOTTER_LINE}
   },
   "experimental": false,
   "metrics-addr": "127.0.0.1:9323",
@@ -102,7 +115,7 @@ if [ "$ENABLE_USERNS_REMAP" = true ]; then
 }
 EOF
 else
-    cat > /etc/docker/daemon.json << 'EOF'
+    cat > /etc/docker/daemon.json << EOF
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -121,11 +134,10 @@ else
     }
   },
   "selinux-enabled": false,
-  "default-shm-size": "64M",
-  "storage-driver": "overlay2",
+  "default-shm-size": "64M",${STORAGE_LINE}
   "exec-opts": ["native.cgroupdriver=systemd"],
   "features": {
-    "buildkit": true
+    "buildkit": true${SNAPSHOTTER_LINE}
   },
   "experimental": false,
   "metrics-addr": "127.0.0.1:9323",
@@ -168,16 +180,18 @@ if ! systemctl restart docker; then
     echo "[WARN] Hardened configuration failed, trying fallback..."
 
     # Fallback: Create minimal working configuration
-    cat > /etc/docker/daemon.json << 'EOF'
+    cat > /etc/docker/daemon.json << EOF
 {
   "log-driver": "json-file",
   "log-opts": {
     "max-size": "10m",
     "max-file": "3"
   },
-  "live-restore": true,
-  "storage-driver": "overlay2",
-  "exec-opts": ["native.cgroupdriver=systemd"]
+  "live-restore": true,${STORAGE_LINE}
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "features": {
+    "buildkit": true${SNAPSHOTTER_LINE}
+  }
 }
 EOF
 

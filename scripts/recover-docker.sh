@@ -31,7 +31,6 @@ if [ -z "$BACKUP" ]; then
     "max-file": "3"
   },
   "live-restore": true,
-  "storage-driver": "overlay2",
   "exec-opts": ["native.cgroupdriver=systemd"]
 }
 EOF

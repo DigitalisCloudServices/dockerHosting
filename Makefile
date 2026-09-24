@@ -7,7 +7,7 @@
 #                    pip install bashate
 
 .PHONY: help lint test test-traefik test-lib test-syntax test-args test-yaml test-pam test-hooks \
-        test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-install-packages test-scan-image \
+        test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-setup-aide test-install-packages test-scan-image \
         test-firewall test-run-report test-install-observability test-configure-observability-egress \
         test-format test-style test-security test-complexity test-unused test-docs test-permissions \
         format coverage ci test-all check-deps install-hooks uninstall-hooks
@@ -109,7 +109,7 @@ lint: check-deps
 # ── tests ────────────────────────────────────────────────────────────────────
 
 # Core test suite (required checks only)
-test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-harden-ssh test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
+test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-setup-aide test-harden-ssh test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
 	@echo "✓ All required tests passed"
 
 # Comprehensive test suite with optional quality checks
@@ -159,6 +159,10 @@ test-harden-kernel: check-deps
 test-setup-audit: check-deps
 	@echo "Running auditd rule tests..."
 	@bats tests/security/test_setup_audit.bats
+
+test-setup-aide: check-deps
+	@echo "Running AIDE config tests..."
+	@bats tests/security/test_setup_aide.bats
 
 test-harden-ssh: check-deps
 	@echo "Running SSH hardening tests..."

@@ -19,7 +19,8 @@ setup() {
     create_mock "useradd"
     create_mock "id"  # default: dockremap user doesn't exist (exit 1)
     create_mock "date"
-    
+    create_mock_with_body "docker" 'exit 1'  # default: Docker not running
+
     # Mock sudo to just execute the command (script auto-elevates)
     create_mock_with_body "sudo" 'shift; exec "$@"'
     
@@ -59,12 +60,58 @@ teardown() {
     assert_file_contains "$DOCKER_DAEMON_JSON" '"userland-proxy"'
     assert_file_contains "$DOCKER_DAEMON_JSON" '"live-restore"'
     assert_file_contains "$DOCKER_DAEMON_JSON" '"default-ulimits"'
-    assert_file_contains "$DOCKER_DAEMON_JSON" '"storage-driver"'
 }
 
-@test "harden-docker: daemon.json uses overlay2 storage driver" {
+# ── image store: keep whichever one Docker already uses ──────────────────────
+
+@test "harden-docker: keeps overlay2 on a host already using it" {
+    create_mock_with_body "docker" 'echo "overlay2 [[\"Backing Filesystem\",\"extfs\"]]"'
     bash "$HARDEN_DOCKER_SCRIPT" --force <<< "n"
     assert_file_contains "$DOCKER_DAEMON_JSON" '"storage-driver": "overlay2"'
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"containerd-snapshotter"'
+    run python3 -m json.tool "$DOCKER_DAEMON_JSON"
+    [ "$status" -eq 0 ]
+}
+
+@test "harden-docker: keeps the containerd image store and never pins overlay2 over it" {
+    create_mock_with_body "docker" 'echo "overlayfs [[\"driver-type\",\"io.containerd.snapshotter.v1\"]]"'
+    bash "$HARDEN_DOCKER_SCRIPT" --force <<< "n"
+    assert_file_contains "$DOCKER_DAEMON_JSON" '"containerd-snapshotter": true'
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"storage-driver"'
+    run python3 -m json.tool "$DOCKER_DAEMON_JSON"
+    [ "$status" -eq 0 ]
+}
+
+@test "harden-docker: containerd image store is kept with userns-remap too" {
+    create_mock_with_body "docker" 'echo "overlayfs [[\"driver-type\",\"io.containerd.snapshotter.v1\"]]"'
+    bash "$HARDEN_DOCKER_SCRIPT" --force <<< "y"
+    assert_file_contains "$DOCKER_DAEMON_JSON" '"containerd-snapshotter": true'
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"storage-driver"'
+    run python3 -m json.tool "$DOCKER_DAEMON_JSON"
+    [ "$status" -eq 0 ]
+}
+
+@test "harden-docker: pins no image store when Docker is not running" {
+    bash "$HARDEN_DOCKER_SCRIPT" --force <<< "n"
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"storage-driver"'
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"containerd-snapshotter"'
+}
+
+@test "harden-docker: fallback config keeps the containerd image store" {
+    create_mock_with_body "docker" 'echo "overlayfs [[\"driver-type\",\"io.containerd.snapshotter.v1\"]]"'
+    create_mock_with_body "systemctl" '
+if [ ! -f "$BATS_TEST_TMPDIR/restart_attempt" ]; then
+    touch "$BATS_TEST_TMPDIR/restart_attempt"
+    exit 1
+fi'
+    create_mock "journalctl"
+    run bash "$HARDEN_DOCKER_SCRIPT" --force <<< "n"
+    [ "$status" -eq 0 ]
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"icc": false'
+    assert_file_contains "$DOCKER_DAEMON_JSON" '"containerd-snapshotter": true'
+    refute_file_contains "$DOCKER_DAEMON_JSON" '"storage-driver"'
+    run python3 -m json.tool "$DOCKER_DAEMON_JSON"
+    [ "$status" -eq 0 ]
 }
 
 @test "harden-docker: daemon.json enables buildkit feature" {
