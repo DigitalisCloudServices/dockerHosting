@@ -22,7 +22,8 @@ INFRA_ARTIFACT=./artifact-cache/infra-aabbccdd1122.tar.gz
 ENV
 
     # GCS key file must exist (content unused with --skip-artifact-download)
-    echo '{}' > "${PROJ}/infra/secrets/gcs_service_account.json"
+    mkdir -p "${PROJ}/secrets"
+    echo '{}' > "${PROJ}/secrets/gcs_service_account.json"
 }
 
 _write_hooks() {

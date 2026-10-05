@@ -105,6 +105,12 @@ fi
 if [[ -f "${PROJECT_DIR}/secrets/wireguard-enabled" ]]; then
     _compose_files+=("${PROJECT_DIR}/docker-compose.wireguard.yml")
 fi
+# VelaAir F1543: office DR source overlay (MariaDB on 127.0.0.1:13306) —
+# enabled by secrets/dr-source-enabled. Without it an update recreates
+# mariadb-primary without the port and the DR replica loses its primary.
+if [[ -f "${PROJECT_DIR}/secrets/dr-source-enabled" ]]; then
+    _compose_files+=("${PROJECT_DIR}/docker-compose.dr-source.yml")
+fi
 # VelaAir F490 bug fix (2026-07-13): dev + devhost-inner overlays. Without these
 # the devhost bootstrap's api container is created with only the base compose
 # and misses the ${API_DEV_SOURCE}:/run/artifact/api bind, so artifact-loader
