@@ -101,3 +101,45 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  # Log forwarder. The agent image carries no Fluent Bit binary, so its logging.d
+  # cannot forward anything; this container tails the logs and ships them with
+  # Fluent Bit's own New Relic output (nrlogs). Pipelines are added per site by
+  # scripts/setup-slowlog-forwarding.sh; see templates/observability/newrelic.fluent-bit.conf.
+  # Image tag is pinned. To update, check https://hub.docker.com/r/fluent/fluent-bit/tags
+  # and the release notes of the nrlogs output and the tail input.
+  fluent-bit:
+    image: fluent/fluent-bit:4.0.14
+    container_name: newrelic-fluent-bit
+    # No healthcheck: the image is distroless (no shell, no pgrep, no curl).
+    # The restart policy brings back a forwarder that exits.
+    restart: unless-stopped
+    command: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+    # Host networking, like the agent, so the egress allowlist (ufw OUTPUT chain,
+    # configure-observability-egress.sh) covers log-api.eu.newrelic.com for it too.
+    # userns_mode: host is required with host networking (see the agent above),
+    # and it is what lets the container's root read a database's slow log on the host.
+    network_mode: host
+    userns_mode: "host"
+    # Reading is all it does: DAC_READ_SEARCH reads a log owned by the database's
+    # user; every other capability is dropped.
+    cap_drop: [ALL]
+    cap_add: [DAC_READ_SEARCH]
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    mem_limit: 96m
+    volumes:
+      - "/:/host:ro"
+      # fluent-bit.conf, the slow-log parser and Lua filter, and pipelines/.
+      - "./fluent-bit:/fluent-bit/etc:ro"
+      # Tail read offsets (one .db per pipeline), kept across restarts.
+      - "./fluent-bit-state:/var/lib/fluent-bit"
+    # NRIA_LICENSE_KEY and NRIA_DISPLAY_NAME, referenced by fluent-bit.conf.
+    env_file:
+      - /etc/observability/newrelic.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

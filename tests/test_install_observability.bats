@@ -234,6 +234,121 @@ teardown() {
         './nri-mysql-docker.sh:/etc/newrelic-infra/bin/nri-mysql-docker.sh:ro'
 }
 
+# ── log forwarder (fluent-bit service) ────────────────────────────────────────
+
+# fluent_bit_service: the fluent-bit service block of the deployed compose file.
+fluent_bit_service() {
+    awk '/^  [a-z][a-z0-9-]*:$/ { in_svc = ($1 == "fluent-bit:") } in_svc' \
+        "$OBS_OPT_DIR/newrelic/docker-compose.yml"
+}
+
+@test "install-observability: newrelic ships the forwarder config, slow-log parser, filter and placeholder" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    local fb="$OBS_OPT_DIR/newrelic/fluent-bit"
+    cmp "$TEMPLATES_DIR/observability/newrelic.fluent-bit.conf" "$fb/fluent-bit.conf"
+    cmp "$TEMPLATES_DIR/observability/newrelic.fluent-bit.placeholder.conf" "$fb/pipelines/00-placeholder.conf"
+    cmp "$TEMPLATES_DIR/observability/newrelic.slowlog.lua" "$fb/mariadb-slowlog.lua"
+    cmp "$TEMPLATES_DIR/observability/newrelic.slowlog.parsers.conf" "$fb/mariadb-slowlog.parsers.conf"
+    [ -d "$OBS_OPT_DIR/newrelic/fluent-bit-state" ]
+    # The agent's logging.d is not used: its image has no Fluent Bit.
+    [ ! -e "$OBS_OPT_DIR/newrelic/logging.d" ]
+    run grep -c 'logging.d:' "$OBS_OPT_DIR/newrelic/docker-compose.yml"
+    [ "$output" = "0" ]
+}
+
+@test "install-observability: newrelic forwarder is a pinned fluent-bit image reading the host read-only" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    run fluent_bit_service
+    [[ "$output" == *"image: fluent/fluent-bit:4.0.14"* ]]
+    [[ "$output" != *"infrastructure-bundle"* ]]
+    [[ "$output" == *"container_name: newrelic-fluent-bit"* ]]
+    [[ "$output" == *"restart: unless-stopped"* ]]
+    [[ "$output" == *'command: ["-c", "/fluent-bit/etc/fluent-bit.conf"]'* ]]
+    [[ "$output" == *'"/:/host:ro"'* ]]
+    [[ "$output" == *'"./fluent-bit:/fluent-bit/etc:ro"'* ]]
+    [[ "$output" == *'"./fluent-bit-state:/var/lib/fluent-bit"'* ]]
+    [[ "$output" == *"/etc/observability/newrelic.env"* ]]
+    # Host networking, so the ufw OUTPUT egress allowlist applies to it.
+    [[ "$output" == *"network_mode: host"* ]]
+    [[ "$output" == *'userns_mode: "host"'* ]]
+    [[ "$output" == *"cap_drop: [ALL]"* ]]
+    [[ "$output" == *"cap_add: [DAC_READ_SEARCH]"* ]]
+    [[ "$output" == *"no-new-privileges:true"* ]]
+    [[ "$output" == *"read_only: true"* ]]
+    [[ "$output" == *"mem_limit: 96m"* ]]
+    [[ "$output" == *'max-size: "10m"'* ]]
+}
+
+@test "install-observability: newrelic forwarder ships slow-log entries with nrlogs to the agent's region" {
+    local conf="$TEMPLATES_DIR/observability/newrelic.fluent-bit.conf"
+    assert_file_contains "$conf" 'Parsers_File  /fluent-bit/etc/mariadb-slowlog.parsers.conf'
+    assert_file_contains "$conf" '@INCLUDE /fluent-bit/etc/pipelines/*.conf'
+    assert_file_contains "$conf" 'Name          nrlogs'
+    assert_file_contains "$conf" 'Match         mariadb.slowlog.*'
+    assert_file_contains "$conf" 'license_key   ${NRIA_LICENSE_KEY}'
+    assert_file_contains "$conf" 'Record        hostname ${NRIA_DISPLAY_NAME}'
+    # The region is the agent's (EU), and the log API host is on the egress allowlist.
+    assert_file_contains "$TEMPLATES_DIR/observability/newrelic.compose.template" 'NEW_RELIC_REGION: EU'
+    assert_file_contains "$conf" 'base_uri      https://log-api.eu.newrelic.com/log/v1'
+    grep -qx 'log-api.eu.newrelic.com' "$TEMPLATES_DIR/observability/newrelic.egress"
+}
+
+@test "install-observability: newrelic licence key reaches the forwarder only through the root-only env file" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    run grep -rl "$VALID_NR_KEY" "$OBS_OPT_DIR" "$TEMPLATES_DIR/observability"
+    [ "$status" -eq 1 ]
+    assert_file_contains "$OBS_ETC_DIR/newrelic.env" "NRIA_LICENSE_KEY=$VALID_NR_KEY"
+    assert_file_contains "$OBS_ETC_DIR/newrelic.env" 'NRIA_DISPLAY_NAME='
+}
+
+@test "install-observability: newrelic forwarder's placeholder pipeline holds only comments" {
+    # An @INCLUDE glob that matches nothing stops Fluent Bit, so the placeholder
+    # must always match, and must add nothing to the configuration.
+    run grep -cvE '^(#.*)?$' "$TEMPLATES_DIR/observability/newrelic.fluent-bit.placeholder.conf"
+    [ "$output" = "0" ]
+}
+
+@test "install-observability: newrelic forwarder finds every file its configs name under /fluent-bit/etc" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    local path
+    [ -d "$OBS_OPT_DIR/newrelic/fluent-bit/pipelines" ]
+    for path in $(grep -hoE '/fluent-bit/etc/[A-Za-z0-9_.-]+\.(conf|lua)' \
+        "$TEMPLATES_DIR/observability/newrelic.fluent-bit.conf" \
+        "$TEMPLATES_DIR/observability/newrelic.slowlog.conf.template" | sort -u); do
+        assert_file_exists "$OBS_OPT_DIR/newrelic/fluent-bit/${path#/fluent-bit/etc/}"
+    done
+}
+
+@test "install-observability: idempotency check fails when the slow-log filter is missing" {
+    cat > "$MOCK_BIN/systemctl" <<MOCK_BODY
+#!/bin/bash
+echo "\$*" >> "$SYSTEMCTL_LOG"
+exit 0
+MOCK_BODY
+    chmod +x "$MOCK_BIN/systemctl"
+
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    rm -f "$OBS_OPT_DIR/newrelic/fluent-bit/mariadb-slowlog.lua"
+
+    run bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"already configured and running"* ]]
+    assert_file_exists "$OBS_OPT_DIR/newrelic/fluent-bit/mariadb-slowlog.lua"
+}
+
+@test "install-observability: newrelic keeps a site's slow-log pipeline across a reinstall" {
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    echo "# site pipeline" > "$OBS_OPT_DIR/newrelic/fluent-bit/pipelines/site-primary-slowlog.conf"
+    bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY" --force
+    assert_file_contains "$OBS_OPT_DIR/newrelic/fluent-bit/pipelines/site-primary-slowlog.conf" '# site pipeline'
+}
+
+@test "install-observability: newrelic summary names the forwarder's logs" {
+    run bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"docker logs newrelic-fluent-bit"* ]]
+}
+
 @test "install-observability: newrelic compose does not pass interface filters as an env var" {
     # network_interface_filters has no env-var support. The agent's envconfig
     # rejected the JSON value on production ("invalid map item") and abandoned

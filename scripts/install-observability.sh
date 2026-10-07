@@ -142,6 +142,12 @@ managed_extras() {
             echo "newrelic.docker-config.yml integrations.d/docker-config.yml"
             echo "newrelic.infra.yml newrelic-infra.yml"
             echo "newrelic.nri-mysql-docker.sh nri-mysql-docker.sh"
+            # Log forwarder (the fluent-bit service). setup-slowlog-forwarding.sh
+            # adds a site's pipelines to fluent-bit/pipelines/ beside the placeholder.
+            echo "newrelic.fluent-bit.conf fluent-bit/fluent-bit.conf"
+            echo "newrelic.fluent-bit.placeholder.conf fluent-bit/pipelines/00-placeholder.conf"
+            echo "newrelic.slowlog.lua fluent-bit/mariadb-slowlog.lua"
+            echo "newrelic.slowlog.parsers.conf fluent-bit/mariadb-slowlog.parsers.conf"
             ;;
     esac
 }
@@ -194,6 +200,10 @@ write_dirs() {
             # Site integration configs, and site secrets they reference;
             # both are bind-mounted by the compose template.
             install -d -m 755 -o root -g root "$OBS_OPT_DIR/$PROVIDER/integrations.d"
+            # Log forwarder config and its per-site pipelines (mounted read-only),
+            # and the tail read offsets it keeps across restarts.
+            install -d -m 755 -o root -g root "$OBS_OPT_DIR/$PROVIDER/fluent-bit/pipelines"
+            install -d -m 700 -o root -g root "$OBS_OPT_DIR/$PROVIDER/fluent-bit-state"
             install -d -m 700 -o root -g root "$OBS_ETC_DIR/newrelic.d"
             ;;
     esac
@@ -434,6 +444,7 @@ main() {
     case "$PROVIDER" in
         newrelic)
             echo "  Agent logs:   docker logs newrelic-infra"
+            echo "  Log forwarder logs: docker logs newrelic-fluent-bit"
             echo ""
             echo "  Host should appear in New Relic (EU region) within ~2 minutes."
             echo "  Filter by custom attribute: managed_by = dockerHosting"

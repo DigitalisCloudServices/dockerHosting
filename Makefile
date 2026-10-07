@@ -182,7 +182,8 @@ test-run-report: check-deps
 
 test-install-observability: check-deps
 	@echo "Running install-observability tests..."
-	@bats tests/test_install_observability.bats tests/test_nri_mysql_docker.bats
+	@bats tests/test_install_observability.bats tests/test_nri_mysql_docker.bats \
+		tests/test_slowlog_forwarder.bats tests/test_setup_slowlog_forwarding.bats
 
 test-configure-observability-egress: check-deps
 	@echo "Running configure-observability-egress tests..."
