@@ -174,3 +174,7 @@ _syntax_check() {
 @test "syntax: scripts/run-report.sh" {
     _syntax_check "scripts/run-report.sh"
 }
+
+@test "syntax: scripts/setup-slowlog-forwarding.sh" {
+    _syntax_check "scripts/setup-slowlog-forwarding.sh"
+}

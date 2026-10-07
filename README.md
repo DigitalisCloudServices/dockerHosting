@@ -957,14 +957,17 @@ The installer:
    `/opt/observability/newrelic/newrelic-infra.yml`, mounted as the agent's `/etc/newrelic-infra.yml`,
    for settings that have no `NRIA_*` form (`network_interface_filters`, which drops the `br-*` and
    `docker0` bridges). Never pass those as environment variables: one unparseable `NRIA_*` value
-   makes the agent discard its entire environment configuration.
+   makes the agent discard its entire environment configuration. Also runs the log forwarder, a
+   `fluent/fluent-bit` container (`newrelic-fluent-bit`) beside the agent, whose config, MariaDB
+   slow-log parser and Lua filter go to `/opt/observability/newrelic/fluent-bit/` (see "MariaDB slow
+   query log").
 5. Installs the generic systemd unit `observability-agent.service`.
 6. Configures the egress allowlist (see below).
 7. Enables and starts the unit; waits up to 60 s for the container to be running.
 
 The script is idempotent. Re-running it is a no-op only when the key is unchanged **and** the
-deployed compose file (and, for New Relic, `docker-config.yml`, `newrelic-infra.yml` and
-`nri-mysql-docker.sh`) are byte-identical to the shipped templates. Otherwise it rewrites them and
+deployed compose file (and, for New Relic, `docker-config.yml`, `newrelic-infra.yml`,
+`nri-mysql-docker.sh` and the log forwarder's files) are byte-identical to the shipped templates. Otherwise it rewrites them and
 restarts the service, so pulling a template change and re-running setup is enough to deploy it
 without `--force`.
 
@@ -1005,6 +1008,87 @@ integrations:
 ```
 
 VelaAir writes its own through `db-sync` (VelaAir F1359).
+
+### MariaDB slow query log (New Relic)
+
+A site whose MariaDB writes a slow query log (`slow_query_log=ON`) can have it forwarded to New
+Relic Logs, parsed, with every literal removed. Run once per site, as root, after the agent is installed and after any change of a log's path, with
+one `<server>=<container>` argument per database server:
+
+```bash
+sudo ./scripts/setup-slowlog-forwarding.sh <site> primary=<container> replica-1=<container> ...
+sudo ./scripts/setup-slowlog-forwarding.sh <site> primary=<container>=/host/path/of/slow_queries.log
+```
+
+`<server>` is the label every forwarded entry carries in its `server` attribute. The log path
+defaults to the host source of the container's `/var/lib/mysql` mount plus `/*slow*.log`, which
+matches `slow_queries.log`, `slow-queries.log` and MariaDB's default `<hostname>-slow.log`, not a
+rotated `.log.1`; give the path as a third `=` part when a data directory holds more than one. The
+forwarder already sees the host read-only at `/host`, so nothing is mounted. Per server the script
+writes the Fluent Bit pipeline `fluent-bit/pipelines/<site>-<server>-slowlog.conf` (restarting the
+`newrelic-fluent-bit` container once, only if something changed; the agent is not restarted) and
+`/etc/logrotate.d/<site>-<server>-slowlog`.
+
+**The forwarder.** The agent image (`newrelic/infrastructure-bundle`) has no Fluent Bit binary, so its
+`logging.d` cannot forward logs. `install-observability.sh --provider=newrelic` therefore runs
+`fluent/fluent-bit` (pinned) as a second service in the same compose stack: host network (so the
+egress allowlist, which already holds `log-api.eu.newrelic.com`, covers it), the host read-only at
+`/host`, every capability dropped except `DAC_READ_SEARCH`, a read-only root filesystem and a 96 MB
+memory limit. It ships with Fluent Bit's `nrlogs` output to the EU Log API, the agent's region. The
+licence key reaches it the same way as the agent: from the root-only
+`/etc/observability/newrelic.env` (`NRIA_LICENSE_KEY`), referenced as `${NRIA_LICENSE_KEY}` in
+`fluent-bit.conf`; no file under `/opt` holds it. Tail read offsets live in
+`/opt/observability/newrelic/fluent-bit-state/`, so a restart neither re-sends nor skips entries.
+`fluent-bit/pipelines/00-placeholder.conf` keeps the pipeline include matching on a host with no
+pipeline yet; Fluent Bit refuses to start on an include that matches nothing. Logs:
+`docker logs newrelic-fluent-bit`.
+
+**What is forwarded.** Fluent Bit joins the lines of an entry (it starts at `# User@Host:`) and runs
+the Lua filter, which replaces the record. Each New Relic log has:
+
+| Attribute | Holds |
+|---|---|
+| `logtype` | always `mariadb-slow-query`; filter on this |
+| `site`, `server` | the `<site>` argument and the `<server>` label (`primary`, `replica-1`, ...) |
+| `hostname` | the host's `NRIA_DISPLAY_NAME`, as the agent reports it |
+| `query_time`, `lock_time` | seconds, numbers |
+| `rows_sent`, `rows_examined` | numbers |
+| `user`, `schema` | the MariaDB account and default schema (`schema` is empty when none) |
+| `digest` | 16 hex characters grouping one statement shape |
+| `statement`, `message` | the normalised statement, at most 500 characters |
+
+The log's timestamp is the entry's `SET timestamp`. The raw entry is not forwarded. Normalisation
+follows VelaAir's `normalise_sql_for_digest`: every string, number, hex or binary literal becomes `?`,
+`IN (...)` lists collapse to `IN (?)`, whitespace collapses, and it also drops comments, handles
+backslash escapes and collapses repeated `VALUES` tuples, so a person's name or email in an `INSERT`
+never leaves the host. The `explain` lines, `use db;` and `SET timestamp` are dropped. The tests run the
+real filter under LuaJIT against a MariaDB 11.8 log (`tests/test_slowlog_forwarder.bats`).
+
+**Rotation.** `copytruncate` at 100 MB (`maxsize`) or daily, keeping 3 compressed copies. Not
+`FLUSH SLOW LOGS`: that needs the `RELOAD` privilege, which only the MariaDB root account has and no
+credential for it is on the host. MariaDB opens the log in append mode, so it writes on at the new end
+of the truncated file. The logrotate timer is daily, so the log is capped at 100 MB plus a day of growth.
+The rotated copies keep the raw statements; only the forwarded copy is normalised.
+
+**NRQL** (the dashboard widgets and the alert are created in New Relic, not by this repository):
+
+```sql
+-- Top slow query shapes by total time
+SELECT sum(query_time) AS 'total s', count(*) AS 'runs', average(query_time) AS 'avg s',
+       max(query_time) AS 'max s', latest(statement) AS 'statement'
+FROM Log WHERE logtype = 'mariadb-slow-query' AND site = 'mysite'
+FACET digest LIMIT 20 SINCE 1 day ago
+
+-- Slow queries per minute
+SELECT count(*) FROM Log WHERE logtype = 'mariadb-slow-query' AND site = 'mysite'
+TIMESERIES 1 minute SINCE 3 hours ago
+
+-- Alert condition (static threshold, sum of count over a 5 minute window)
+SELECT count(*) FROM Log WHERE logtype = 'mariadb-slow-query' AND site = 'mysite'
+```
+
+Alert thresholds to start from at `long_query_time = 0.5`: warning above 20 and critical above 60
+slow queries in 5 minutes, for 10 minutes. Re-tune after a week of baseline. Add `FACET server` to the alert query to alert per server.
 
 ### Verify
 

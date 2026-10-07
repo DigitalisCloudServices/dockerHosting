@@ -1,0 +1,23 @@
+# Rotation for one MariaDB server's slow query log.
+# Rendered by scripts/setup-slowlog-forwarding.sh from
+# templates/observability/newrelic.slowlog.logrotate.template. Do not edit by hand.
+#
+# copytruncate, not FLUSH SLOW LOGS: the flush needs the RELOAD privilege, which
+# only the MariaDB root account holds, and no credential for it is on the host.
+# MariaDB opens the log in append mode, so it keeps writing at the new end of the
+# truncated file (verified on mariadb:11.8: no sparse file). Lines written between
+# the copy and the truncate are lost, which is acceptable for a diagnostic log.
+#
+# The rotated copies hold the raw statements, literals included, so keep few
+# and let them go. The logrotate timer runs daily, so the log is capped at 100M
+# plus one day of growth.
+{{SLOWLOG_PATH}} {
+    daily
+    maxsize 100M
+    rotate 3
+    copytruncate
+    compress
+    delaycompress
+    missingok
+    notifempty
+}

@@ -29,6 +29,13 @@ _yamllint() {
     [ "$status" -eq 0 ]
 }
 
+# ── Observability templates ───────────────────────────────────────────────────
+
+@test "yaml: templates/observability/newrelic.compose.template is valid" {
+    run _yamllint "$REPO_ROOT/templates/observability/newrelic.compose.template"
+    [ "$status" -eq 0 ]
+}
+
 # ── CI / GitHub Actions ───────────────────────────────────────────────────────
 
 @test "yaml: .github/workflows/ci.yml is valid" {

@@ -1,0 +1,39 @@
+# Fluent Bit pipeline for one MariaDB server's slow query log.
+# Rendered by scripts/setup-slowlog-forwarding.sh from
+# templates/observability/newrelic.slowlog.conf.template into
+# /opt/observability/newrelic/fluent-bit/pipelines/. Do not edit by hand.
+#
+# {{SLOWLOG_PATH}} is the log's path on the host. The fluent-bit container sees the host
+# read-only under /host, so no extra mount is needed. Rotation (logrotate, copytruncate)
+# truncates the file in place; tail notices and starts again from the top. The DB file
+# keeps the read offset in /var/lib/fluent-bit, a host directory, so a restart neither
+# re-sends nor skips entries.
+[INPUT]
+    Name              tail
+    Tag               mariadb.slowlog.{{SITE}}.{{SERVER}}
+    Path              /host{{SLOWLOG_PATH}}
+    Multiline.Parser  mariadb-slowlog
+    Read_from_Head    Off
+    Refresh_Interval  30
+    # A statement with an encrypted payload can be hundreds of KB on one line.
+    # Off would stop following the file at the first line longer than the buffer.
+    Buffer_Max_Size   2M
+    Skip_Long_Lines   On
+    # Pauses reading, rather than growing without bound, while New Relic is
+    # unreachable; the container's memory limit is 96 MB.
+    Mem_Buf_Limit     8M
+    DB                /var/lib/fluent-bit/mariadb-slowlog-{{SITE}}-{{SERVER}}.db
+
+# Parses the entry, normalises the statement (every literal becomes ?) and
+# replaces the record, so the raw log text is never forwarded.
+[FILTER]
+    Name              lua
+    Match             mariadb.slowlog.{{SITE}}.{{SERVER}}
+    script            /fluent-bit/etc/mariadb-slowlog.lua
+    call              slowlog_clean
+
+[FILTER]
+    Name              record_modifier
+    Match             mariadb.slowlog.{{SITE}}.{{SERVER}}
+    Record            site {{SITE}}
+    Record            server {{SERVER}}
