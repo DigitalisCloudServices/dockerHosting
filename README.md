@@ -29,6 +29,7 @@ sudo ./setup.sh
 ```
 
 **What it does:**
+- Pins `/etc/fstab` to filesystem UUIDs where it names disks by kernel device name ([details](#pin-etcfstab-to-uuids))
 - Installs Docker and Docker Compose
 - Installs essential packages (git, curl, make, etc.)
 - **Installs Traefik v3.6** as the boundary proxy (replaces nginx at the host level)
@@ -175,6 +176,7 @@ dockerHosting/
 ├── docs/
 │   └── compliance.md                 # Security posture: ISO 27001 / CIS / NIST mapping
 ├── scripts/                          # Modular setup scripts
+│   ├── migrate-fstab-to-uuid.sh      # /etc/fstab kernel device names -> UUID= (first setup step)
 │   ├── install-docker.sh             # Docker installation (GPG-verified repo)
 │   ├── install-packages.sh           # Package installation
 │   ├── install-traefik.sh            # Traefik boundary proxy installation
@@ -286,6 +288,32 @@ sudo ./scripts/scan-image.sh --severity CRITICAL,HIGH --ignore-unfixed myimage:t
 # Force re-run a specific step without re-running setup in full
 sudo ./setup.sh --force=ntp
 sudo ./setup.sh --force=apparmor,firewall
+```
+
+### Pin /etc/fstab to UUIDs
+
+`setup.sh` runs `scripts/migrate-fstab-to-uuid.sh` before any other step (`--skip=fstab` leaves it out). It rewrites each `/etc/fstab` entry that names a disk by its kernel device name (`/dev/sdb1`, `/dev/vdb`, `/dev/xvdf1`, `/dev/hda2`, `/dev/nvme0n1p1`) to `UUID=...`. It is safe to run on an existing host, and a second run reports "Nothing to migrate".
+
+**Why:** kernel names follow probe order and can change between boots. On 2026-10-12 VelaAir prod (GCE, Debian 13) rebooted with its two SCSI disks swapped. Its fstab, hand-edited at host build, mounted the 100 GB data disk as `/dev/sdb1 /opt ext4 defaults 0 0`. `/dev/sdb1` was now the root disk, so `/opt` got the root filesystem (systemd: "Directory /opt to mount over is not empty, mounting anyway") and the whole Docker stack, whose data root is under `/opt`, disappeared. A UUID names the filesystem, not the slot, so it survives a reboot like that.
+
+**What it migrates:** only a kernel-name entry whose running state proves which filesystem the name means right now:
+
+- a filesystem: its mountpoint is mounted from that device, `findmnt` reports the same UUID as `blkid -s UUID -o value <device>`, and the filesystem is mounted nowhere else;
+- a swap partition: it is active (`/proc/swaps`) from that device.
+
+**What it leaves alone:**
+
+- `UUID=`, `PARTUUID=`, `LABEL=`, `PARTLABEL=`, `/dev/disk/by-*`, `/dev/mapper/*`, LVM, md RAID, tmpfs, proc, swap files, network filesystems and comments are never touched.
+- An entry that is not mounted (or a swap partition that is not active), or whose device has no UUID, gets a warning and stays as it is. Mount it and re-run.
+- An entry mounted from a different device, with a different UUID, or mounted twice means the device names on this boot cannot be trusted, so **nothing** is migrated and the script says so loudly. The 2026-10-12 state looks exactly like this: `/dev/sdb1` mounted on both `/` and `/opt`. Migrating then would pin the wrong disk for good.
+
+**How it writes:** it backs fstab up to `/etc/fstab.bak-<UTC timestamp>`, builds the new file next to it, checks it with `findmnt --verify` and only then renames it into place, so a file that fails the check never replaces fstab. Comments, order, options and spacing are kept, `nofail` is not added, and `systemctl daemon-reload` runs afterwards.
+
+**Limit:** it pins whatever is mounted now. Two data disks that swapped places with each other (each still mounted once) look healthy, so run it on a boot whose mounts you know are right. On a new host that is the install itself.
+
+```bash
+sudo ./scripts/migrate-fstab-to-uuid.sh --dry-run   # show what would change
+sudo ./scripts/migrate-fstab-to-uuid.sh             # migrate
 ```
 
 ### Audit report (`--report`)
@@ -1328,6 +1356,7 @@ make test-syntax       # bash -n syntax check
 make test-args         # argument validation
 make test-traefik      # Traefik script tests
 make test-lib          # lib/ script tests
+make test-migrate-fstab # fstab UUID migration tests
 **BATS Test Suites:**
 
 | Test file | What it covers |
@@ -1339,7 +1368,9 @@ make test-lib          # lib/ script tests
 | `tests/traefik/test_install_traefik.bats` | 53 tests: nginx detection, migration, config writing, Cloudflare trustedIPs rendering, deploy-drift reinstall |
 | `tests/lib/test_decrypt.bats` | Artifact decryption and signature verification |
 | `tests/lib/test_gcs.bats` | GCS OAuth2 and download helpers |
+| `tests/test_compose_overlays.bats` | `lib/update-site.sh` compose overlay selection (run by `make test-lib` with `tests/lib/`) |
 | `tests/test_lifecycle_hooks.bats` | Lifecycle hook parsing and execution |
+| `tests/test_migrate_fstab_to_uuid.bats` | fstab UUID migration: safety checks, swapped-disk boot, layout kept, backup, `findmnt --verify`, dry run (`make test-migrate-fstab`) |
 | `tests/test_pam_policy.bats` | PAM password policy configuration |
 | `tests/test_yaml.bats` | YAML syntax validation for templates |
 | `tests/security/*.bats` | 11 security hardening script test suites |

@@ -475,10 +475,10 @@ exit 0
     # Just sanity-check perms reflect what chmod 0640 produces on a regular file.
     # We can't always assert 640 exactly (umask, FS), so we assert *not* world-writable.
     local perms
-    perms=$(stat -f '%Lp' "$md" 2>/dev/null || stat -c '%a' "$md" 2>/dev/null)
+    perms=$(file_mode "$md")
     [ -n "$perms" ]
-    # No world-write bit (bit 2).
-    [ $((perms & 2)) -eq 0 ]
+    # No world-write bit (bit 2); the mode is octal.
+    [ $((8#$perms & 2)) -eq 0 ]
 }
 
 # ── characterization: section_*  list matches _run_sections call list ────────

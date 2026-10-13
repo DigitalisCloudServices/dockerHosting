@@ -260,20 +260,24 @@ run_fw() {
     [ -n "$(ufw_call_line 'default deny outgoing')" ]
 }
 
-@test "configure-firewall: sets default deny forward" {
+# Forward is ALLOW on purpose since c6fc28b (2026-06-12): containers route
+# through the host's Docker bridges, which a deny-forward policy breaks.
+@test "configure-firewall: sets default allow forward (Docker bridge routing)" {
     run_fw
-    [ -n "$(ufw_call_line 'default deny forward')" ]
+    [ -n "$(ufw_call_line 'default allow forward')" ]
+    [ -z "$(ufw_call_line 'default deny forward')" ]
 }
 
 @test "configure-firewall: applies default policies AFTER allow rules" {
     run_fw
-    # The last `allow` call must come before the first `default deny`.
-    local last_allow first_deny
-    last_allow=$(grep -nF 'allow' "$UFW_LOG" | tail -n1 | cut -d: -f1)
-    first_deny=$(grep -nF 'default deny' "$UFW_LOG" | head -n1 | cut -d: -f1)
+    # The last `allow` rule must come before the first `default` policy
+    # (`default allow forward` is a policy, not a rule).
+    local last_allow first_default
+    last_allow=$(grep -n '^allow ' "$UFW_LOG" | tail -n1 | cut -d: -f1)
+    first_default=$(grep -n '^default ' "$UFW_LOG" | head -n1 | cut -d: -f1)
     [ -n "$last_allow" ]
-    [ -n "$first_deny" ]
-    [ "$last_allow" -lt "$first_deny" ]
+    [ -n "$first_default" ]
+    [ "$last_allow" -lt "$first_default" ]
 }
 
 # ── tcp_loose conntrack safeguard ────────────────────────────────────────────
@@ -432,8 +436,10 @@ EOF
 
 @test "configure-firewall: installs ufw via apt-get when not present" {
     # Remove ufw mock so `command -v ufw` fails initially. Our apt-get mock
-    # will create the ufw mock to simulate a successful install.
+    # will create the ufw mock to simulate a successful install. hide_command
+    # also hides a real ufw on the host (CI runners have /usr/sbin/ufw).
     rm -f "$MOCK_BIN/ufw"
+    hide_command ufw "$FW_SCRIPT"
 
     local apt_log="$BATS_TEST_TMPDIR/apt.log"
     cat > "$MOCK_BIN/apt-get" <<APT_MOCK
@@ -560,6 +566,8 @@ UFW_MOCK
     [ -n "$(ufw_call_line 'allow in 22/tcp')" ]
     [ -n "$(ufw_call_line 'allow in 80/tcp')" ]
     [ -n "$(ufw_call_line 'allow in 443/tcp')" ]
+    [ -n "$(ufw_call_line 'allow in 8443/tcp')" ]
+    [ -n "$(ufw_call_line 'allow in from 10.0.0.0/8')" ]
     [ -n "$(ufw_call_line 'allow in from 172.16.0.0/12')" ]
     [ -n "$(ufw_call_line 'allow in from 192.168.0.0/16')" ]
 
@@ -572,11 +580,14 @@ UFW_MOCK
     [ -n "$(ufw_call_line 'allow out 123/udp')" ]
     [ -n "$(ufw_call_line 'allow out 587/tcp')" ]
     [ -n "$(ufw_call_line 'allow out on lo')" ]
+    [ -n "$(ufw_call_line 'allow out to 10.0.0.0/8')" ]
+    [ -n "$(ufw_call_line 'allow out to 172.16.0.0/12')" ]
+    [ -n "$(ufw_call_line 'allow out to 192.168.0.0/16')" ]
 
-    # All default-deny policies.
+    # Default policies: deny in and out, allow forward (Docker bridges).
     [ -n "$(ufw_call_line 'default deny incoming')" ]
     [ -n "$(ufw_call_line 'default deny outgoing')" ]
-    [ -n "$(ufw_call_line 'default deny forward')" ]
+    [ -n "$(ufw_call_line 'default allow forward')" ]
 
     # Single enable.
     local n

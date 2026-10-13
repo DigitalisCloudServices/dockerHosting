@@ -1,0 +1,78 @@
+mariadbd, Version: 11.8.8-MariaDB-ubu2404-log (mariadb.org binary distribution). started with:
+Tcp port: 3306  Unix socket: /run/mysqld/mysqld.sock
+Time		    Id Command	Argument
+# Time: 261007 19:22:00
+# User@Host: root[root] @ localhost []
+# Thread_id: 3  Schema:   QC_hit: No
+# Query_time: 0.000187  Lock_time: 0.000000  Rows_sent: 0  Rows_examined: 0
+# Rows_affected: 1  Bytes_sent: 11
+SET timestamp=1791400920;
+create database d;
+# Time: 261007 19:22:04
+# User@Host: root[root] @ localhost []
+# Thread_id: 4  Schema: d  QC_hit: No
+# Query_time: 0.012204  Lock_time: 0.000000  Rows_sent: 0  Rows_examined: 0
+# Rows_affected: 0  Bytes_sent: 11
+use d;
+SET timestamp=1791400924;
+create table t (id int primary key, name varchar(100), email varchar(255));
+# User@Host: root[root] @ localhost []
+# Thread_id: 4  Schema: d  QC_hit: No
+# Query_time: 0.001381  Lock_time: 0.000164  Rows_sent: 0  Rows_examined: 0
+# Rows_affected: 3  Bytes_sent: 52
+SET timestamp=1791400924;
+insert into t values (1,'Jane Example','jane.example@example.com'),(2,'Pat Bloggs','pat.bloggs@example.org'),(3,'Sean O''Brien',x'4a6f65');
+# Time: 261007 19:22:05
+# User@Host: root[root] @ localhost []
+# Thread_id: 4  Schema: d  QC_hit: No
+# Query_time: 0.000623  Lock_time: 0.000118  Rows_sent: 0  Rows_examined: 1
+# Rows_affected: 1  Bytes_sent: 52
+# Full_scan: No  Full_join: No  Tmp_table: No  Tmp_table_on_disk: No
+# Filesort: No  Filesort_on_disk: No  Merge_passes: 0  Priority_queue: No
+#
+# explain: id	select_type	table	type	possible_keys	key	key_len	ref	rows	r_rows	filtered	r_filtered	Extra
+# explain: 1	SIMPLE	t	range	PRIMARY	PRIMARY	4	NULL	1	1.00	100.00	100.00	Using where
+#
+SET timestamp=1791400925;
+update t set name='Jane Example' where id=1 and email like '%@example.com';
+# Time: 261007 19:22:11
+# User@Host: root[root] @ localhost []
+# Thread_id: 4  Schema: d  QC_hit: No
+# Query_time: 0.000941  Lock_time: 0.000102  Rows_sent: 3  Rows_examined: 6
+# Rows_affected: 0  Bytes_sent: 98
+# Tmp_tables: 1  Tmp_disk_tables: 0  Tmp_table_sizes: 0
+# Full_scan: No  Full_join: No  Tmp_table: Yes  Tmp_table_on_disk: No
+# Filesort: No  Filesort_on_disk: No  Merge_passes: 0  Priority_queue: No
+#
+# explain: id	select_type	table	type	possible_keys	key	key_len	ref	rows	r_rows	filtered	r_filtered	Extra
+# explain: 1	SIMPLE	t	range	PRIMARY	PRIMARY	4	NULL	3	3.00	100.00	100.00	Using where; Using index
+#
+SET timestamp=1791400931;
+select id, count(*) from t where id in (1,2,3) group by id having count(*) > 0;
+# Time: 261007 19:22:18
+# User@Host: root[root] @ localhost []
+# Thread_id: 4  Schema: d  QC_hit: No
+# Query_time: 0.000377  Lock_time: 0.000081  Rows_sent: 1  Rows_examined: 3
+# Rows_affected: 0  Bytes_sent: 71
+# Full_scan: Yes  Full_join: No  Tmp_table: No  Tmp_table_on_disk: No
+# Filesort: No  Filesort_on_disk: No  Merge_passes: 0  Priority_queue: No
+#
+# explain: id	select_type	table	type	possible_keys	key	key_len	ref	rows	r_rows	filtered	r_filtered	Extra
+# explain: 1	SIMPLE	t	ALL	NULL	NULL	NULL	NULL	3	3.00	100.00	33.33	Using where
+#
+SET timestamp=1791400938;
+select 'Jane' as a /* asked by Pat Bloggs */
+from t where name = "Pat Bloggs";
+# Time: 261007 19:22:24
+# User@Host: root[root] @ localhost []
+# Thread_id: 4  Schema: d  QC_hit: No
+# Query_time: 0.000498  Lock_time: 0.000097  Rows_sent: 0  Rows_examined: 3
+# Rows_affected: 1  Bytes_sent: 52
+# Full_scan: Yes  Full_join: No  Tmp_table: No  Tmp_table_on_disk: No
+# Filesort: No  Filesort_on_disk: No  Merge_passes: 0  Priority_queue: No
+#
+# explain: id	select_type	table	type	possible_keys	key	key_len	ref	rows	r_rows	filtered	r_filtered	Extra
+# explain: 1	SIMPLE	t	ALL	NULL	NULL	NULL	NULL	3	3.00	100.00	33.33	Using where
+#
+SET timestamp=1791400944;
+delete from t where email = 'pat.bloggs@example.org' or name = 'Sean O\'Brien' or email = x'4a6f65';

@@ -294,7 +294,10 @@ EOF
 }
 
 @test "configure-observability-egress: warns and skips when ufw is not installed" {
+    # Removing the mock is not enough where the host has a real ufw (CI
+    # runners ship /usr/sbin/ufw); hide that too.
     rm -f "$MOCK_BIN/ufw"
+    hide_command ufw "$PATCHED_SCRIPT"
     run_script --provider=newrelic
     [ "$status" -eq 0 ]
     [[ "$output" == *"ufw not installed"* ]]

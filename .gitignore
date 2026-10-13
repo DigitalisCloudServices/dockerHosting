@@ -21,7 +21,9 @@ Thumbs.db
 # Logs
 *.log
 logs/
+# ...but test fixtures that happen to be logs are source. Without this the
+# MariaDB slow-log fixture was never committed and its tests failed in CI.
+!tests/fixtures/*.log
 
 # Testing
 test-deploy/
-tests/lib/

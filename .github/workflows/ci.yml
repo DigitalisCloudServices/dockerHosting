@@ -86,7 +86,7 @@ jobs:
           sudo apt-get install -y bats
 
       - name: Run lib/ tests
-        run: bats --recursive tests/lib/
+        run: bats --recursive tests/lib/ tests/test_compose_overlays.bats
 
   test-pam-policy:
     name: PAM policy tests
@@ -316,6 +316,20 @@ jobs:
 
       - name: Run configure-observability-egress tests
         run: bats tests/test_configure_observability_egress.bats
+
+  test-migrate-fstab:
+    name: Migrate fstab to UUID tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Run migrate-fstab-to-uuid tests
+        run: bats tests/test_migrate_fstab_to_uuid.bats
 
   test-yaml:
     name: YAML validation

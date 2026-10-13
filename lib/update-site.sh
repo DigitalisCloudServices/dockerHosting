@@ -662,7 +662,7 @@ done
 # Persist artifact names so --skip-artifact-download works offline
 _names_csv="$(
     IFS=','
-    echo "${ARTIFACT_NAMES[*]}"
+    echo "${ARTIFACT_NAMES[*]:-}"
 )"
 [[ -n "${_names_csv}" ]] && _dotenv_set ARTIFACT_NAMES "${_names_csv}"
 
