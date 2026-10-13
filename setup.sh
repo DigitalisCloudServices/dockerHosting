@@ -379,7 +379,7 @@ run_full_setup() {
     # Pin /etc/fstab to filesystem UUIDs first, before anything is installed
     # under the mounts it lists. Kernel names like /dev/sdb1 can swap between
     # boots (2026-10-12: /opt came up holding the root filesystem).
-    if ! _step_skipped "fstab" && [ -f "$DOCKERHOSTING_DIR/scripts/migrate-fstab-to-uuid.sh" ]; then
+    if ! _step_skipped "fstab" && [[ -f "$DOCKERHOSTING_DIR/scripts/migrate-fstab-to-uuid.sh" ]]; then
         log_info "Migrating /etc/fstab device names to UUIDs..."
         bash "$DOCKERHOSTING_DIR/scripts/migrate-fstab-to-uuid.sh"
     fi

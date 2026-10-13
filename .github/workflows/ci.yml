@@ -326,12 +326,7 @@ jobs:
       - name: Install bats-core
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats || true
-          if ! bats --version | grep -qP 'Bats [1-9]'; then
-            curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz \
-              | tar -xz -C /tmp
-            sudo bash /tmp/bats-core-1.11.0/install.sh /usr/local
-          fi
+          sudo apt-get install -y bats
 
       - name: Run migrate-fstab-to-uuid tests
         run: bats tests/test_migrate_fstab_to_uuid.bats
