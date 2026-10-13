@@ -349,6 +349,31 @@ UFW_MOCK
     grep -q "enable --now observability-egress-refresh.timer" "$SYSTEMCTL_LOG"
 }
 
+# ── boot ordering: the set must exist before ufw loads before.rules ─────────
+# Regression (2026-10-12, VelaAir prod): the refresh timer fires 2 min after
+# boot, but ufw.service runs iptables-restore on before.rules much earlier. The
+# `-m set --match-set` rule failed with "Set ... doesn't exist", the whole of
+# before.rules (including the conntrack ESTABLISHED accepts) was rejected, and
+# the host dropped every reply packet.
+
+@test "configure-observability-egress: writes a boot unit that creates the set before ufw" {
+    run_script --provider=newrelic
+    [ "$status" -eq 0 ]
+    local svc="$OBS_SYSTEMD_DIR/observability-egress-ipset.service"
+    assert_file_exists "$svc"
+    assert_file_contains "$svc" "DefaultDependencies=no"
+    assert_file_contains "$svc" "Before=ufw.service"
+    assert_file_contains "$svc" "RemainAfterExit=yes"
+    assert_file_contains "$svc" "ipset create -exist $IPSET_NAME hash:ip family inet timeout 0"
+    assert_file_contains "$svc" "WantedBy=ufw.service"
+}
+
+@test "configure-observability-egress: enables the boot ipset unit" {
+    run_script --provider=newrelic
+    [ "$status" -eq 0 ]
+    grep -q "enable observability-egress-ipset.service" "$SYSTEMCTL_LOG"
+}
+
 # ── EUID enforcement (verified via unpatched script) ────────────────────────
 
 @test "configure-observability-egress: refuses to run as non-root" {
