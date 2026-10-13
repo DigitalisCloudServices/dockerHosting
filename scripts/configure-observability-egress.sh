@@ -167,10 +167,13 @@ apply_ufw_rule() {
 
     # ufw does not natively understand ipsets, so we drop a raw iptables rule
     # via ufw's before.rules mechanism. The rule is idempotent: we tag it with
-    # a comment and remove any prior copy before re-adding.
+    # an iptables comment match and remove any prior copy before re-adding.
+    # The tag must be `-m comment`: iptables-restore rejects a trailing `# ...`
+    # after a rule, which makes the whole of before.rules unloadable. The
+    # marker below (no leading '#') also matches lines written in that old form.
     local before_rules="/etc/ufw/before.rules"
-    local marker="# dockerHosting:observability-egress"
-    local rule="-A ufw-before-output -p tcp -m set --match-set ${IPSET_NAME} dst --dport 443 -j ACCEPT ${marker}"
+    local marker="dockerHosting:observability-egress"
+    local rule="-A ufw-before-output -p tcp -m set --match-set ${IPSET_NAME} dst --dport 443 -m comment --comment \"${marker}\" -j ACCEPT"
 
     if [[ ! -f "$before_rules" ]]; then
         log_warn "$before_rules not found — skipping ipset ufw rule"

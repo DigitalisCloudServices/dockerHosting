@@ -264,6 +264,27 @@ EOF
     [ "$count" -eq 1 ]
 }
 
+# Regression (2026-10-12, VelaAir prod): iptables-restore rejects a trailing
+# `# comment` after a rule ("Bad argument `#'"), which made the whole of
+# before.rules unloadable. The marker must be an iptables comment match.
+@test "configure-observability-egress: tags the rule with -m comment, not a trailing #" {
+    run_script --provider=newrelic
+    [ "$status" -eq 0 ]
+    rule=$(grep "match-set $IPSET_NAME" "$UFW_BEFORE_RULES")
+    [[ "$rule" == *'-m comment --comment "dockerHosting:observability-egress"'* ]]
+    [[ "$rule" != *"#"* ]]
+}
+
+@test "configure-observability-egress: replaces an old trailing-# rule on re-run" {
+    awk '/^COMMIT/ { print "-A ufw-before-output -p tcp -m set --match-set obs_egress_ips dst --dport 443 -j ACCEPT # dockerHosting:observability-egress" } { print }' \
+        "$UFW_BEFORE_RULES" > "$UFW_BEFORE_RULES.tmp" && mv "$UFW_BEFORE_RULES.tmp" "$UFW_BEFORE_RULES"
+    run_script --provider=newrelic
+    [ "$status" -eq 0 ]
+    ! grep -q "ACCEPT # dockerHosting" "$UFW_BEFORE_RULES"
+    count=$(grep -c "dockerHosting:observability-egress" "$UFW_BEFORE_RULES")
+    [ "$count" -eq 1 ]
+}
+
 @test "configure-observability-egress: warns and skips when before.rules does not exist" {
     rm -f "$UFW_BEFORE_RULES"
     run_script --provider=newrelic
