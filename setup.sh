@@ -53,10 +53,11 @@ OPTIONS
   --report                    Run host audit report and exit (no mutations).
   --force                     Force re-run every setup step, even if already configured.
   --force=step1,step2,...     Force only the named step(s). Valid steps:
-                                packages, docker, traefik, firewall, kernel, ntp,
-                                audit, auto-updates, harden-docker, apparmor, pam,
-                                aide, shm, fail2ban, email, bootloader, usb, ssh,
-                                mfa, observability
+                                fstab, packages, docker, traefik, firewall, kernel,
+                                ntp, audit, auto-updates, harden-docker, apparmor,
+                                pam, aide, shm, fail2ban, email, bootloader, usb,
+                                ssh, mfa, observability
+                                (fstab always runs; it changes nothing once done)
   --userns-remap=yes|no       Answer the Docker user-namespace remapping prompt
                                 up front. Use 'no' for stacks that need host
                                 device access (e.g. USB passthrough).
@@ -307,7 +308,7 @@ confirm_ssh_keys_before_hardening() {
 # Usage: run_full_setup [--force[=step1,step2,...]]
 #   --force            force-run every step even if already configured
 #   --force=docker     force only the named step(s); comma-separated
-#   Valid step names: packages, docker, traefik, firewall, kernel, audit,
+#   Valid step names: fstab, packages, docker, traefik, firewall, kernel, audit,
 #                     auto-updates, harden-docker, pam, aide, shm, fail2ban,
 #                     email, ntp, apparmor, ssh, mfa, bootloader, logrotate,
 #                     observability
@@ -374,6 +375,14 @@ run_full_setup() {
     }
 
     cd "$DOCKERHOSTING_DIR"
+
+    # Pin /etc/fstab to filesystem UUIDs first, before anything is installed
+    # under the mounts it lists. Kernel names like /dev/sdb1 can swap between
+    # boots (2026-10-12: /opt came up holding the root filesystem).
+    if ! _step_skipped "fstab" && [ -f "$DOCKERHOSTING_DIR/scripts/migrate-fstab-to-uuid.sh" ]; then
+        log_info "Migrating /etc/fstab device names to UUIDs..."
+        bash "$DOCKERHOSTING_DIR/scripts/migrate-fstab-to-uuid.sh"
+    fi
 
     # Install packages from repository config
     if ! _step_skipped "packages" && [ -f "$DOCKERHOSTING_DIR/scripts/install-packages.sh" ]; then

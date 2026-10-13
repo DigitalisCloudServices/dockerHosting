@@ -178,3 +178,7 @@ _syntax_check() {
 @test "syntax: scripts/setup-slowlog-forwarding.sh" {
     _syntax_check "scripts/setup-slowlog-forwarding.sh"
 }
+
+@test "syntax: scripts/migrate-fstab-to-uuid.sh" {
+    _syntax_check "scripts/migrate-fstab-to-uuid.sh"
+}

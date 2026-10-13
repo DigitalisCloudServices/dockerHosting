@@ -9,6 +9,7 @@
 .PHONY: help lint test test-traefik test-lib test-syntax test-args test-yaml test-pam test-hooks \
         test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-install-packages test-scan-image \
         test-firewall test-run-report test-install-observability test-configure-observability-egress \
+        test-migrate-fstab \
         test-format test-style test-security test-complexity test-unused test-docs test-permissions \
         format coverage ci test-all check-deps install-hooks uninstall-hooks
 
@@ -46,6 +47,7 @@ help:
 	@echo "  make test-setup-audit   Run auditd rule tests"
 	@echo "  make test-install-packages Run install-packages tests"
 	@echo "  make test-scan-image   Run image scanning tests"
+	@echo "  make test-migrate-fstab Run fstab UUID migration tests"
 	@echo "  make test-yaml         Run YAML validation checks"
 	@echo ""
 	@echo "Code Quality:"
@@ -109,7 +111,7 @@ lint: check-deps
 # ── tests ────────────────────────────────────────────────────────────────────
 
 # Core test suite (required checks only)
-test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-harden-ssh test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-yaml test-permissions
+test: lint test-syntax test-args test-traefik test-lib test-pam test-hooks test-fail2ban test-harden-docker test-harden-kernel test-setup-audit test-harden-ssh test-install-packages test-scan-image test-firewall test-run-report test-install-observability test-configure-observability-egress test-migrate-fstab test-yaml test-permissions
 	@echo "✓ All required tests passed"
 
 # Comprehensive test suite with optional quality checks
@@ -190,6 +192,10 @@ test-install-observability: check-deps
 test-configure-observability-egress: check-deps
 	@echo "Running configure-observability-egress tests..."
 	@bats tests/test_configure_observability_egress.bats
+
+test-migrate-fstab: check-deps
+	@echo "Running migrate-fstab-to-uuid tests..."
+	@bats tests/test_migrate_fstab_to_uuid.bats
 
 test-yaml: check-deps
 	@echo "Running YAML validation..."
