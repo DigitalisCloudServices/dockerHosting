@@ -118,8 +118,9 @@ ensure_packages() {
 # ── ipset setup ─────────────────────────────────────────────────────────────
 
 create_ipset() {
-    # ipset persists in memory; we recreate idempotently. Persistence across
-    # reboots is provided by the refresh service ExecStartPre below.
+    # ipset lives in memory only; we recreate idempotently. Across reboots,
+    # observability-egress-ipset.service recreates it (empty) before ufw.service
+    # loads before.rules, and the refresh timer fills it once the network is up.
     if ipset list "$IPSET_NAME" > /dev/null 2>&1; then
         log_info "ipset '$IPSET_NAME' already exists"
         if [[ "$FORCE" == true ]]; then
@@ -166,10 +167,13 @@ apply_ufw_rule() {
 
     # ufw does not natively understand ipsets, so we drop a raw iptables rule
     # via ufw's before.rules mechanism. The rule is idempotent: we tag it with
-    # a comment and remove any prior copy before re-adding.
+    # an iptables comment match and remove any prior copy before re-adding.
+    # The tag must be `-m comment`: iptables-restore rejects a trailing `# ...`
+    # after a rule, which makes the whole of before.rules unloadable. The
+    # marker below (no leading '#') also matches lines written in that old form.
     local before_rules="/etc/ufw/before.rules"
-    local marker="# dockerHosting:observability-egress"
-    local rule="-A ufw-before-output -p tcp -m set --match-set ${IPSET_NAME} dst --dport 443 -j ACCEPT ${marker}"
+    local marker="dockerHosting:observability-egress"
+    local rule="-A ufw-before-output -p tcp -m set --match-set ${IPSET_NAME} dst --dport 443 -m comment --comment \"${marker}\" -j ACCEPT"
 
     if [[ ! -f "$before_rules" ]]; then
         log_warn "$before_rules not found — skipping ipset ufw rule"
@@ -306,6 +310,36 @@ EOF
     log_info "Installed observability-egress-refresh.timer (boot + daily)"
 }
 
+# ── boot unit: create the set before ufw loads before.rules ─────────────────
+# before.rules references the set; if it does not exist when ufw.service runs
+# iptables-restore, the whole file is rejected — including the conntrack
+# ESTABLISHED accepts — and the host drops every reply packet. The refresh
+# timer (OnBootSec=2min) is far too late, so create the empty set first.
+
+install_boot_ipset_unit() {
+    local svc="$OBS_SYSTEMD_DIR/observability-egress-ipset.service"
+
+    cat > "$svc" << EOF
+[Unit]
+Description=Create observability egress ipset before ufw loads before.rules
+DefaultDependencies=no
+Before=ufw.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ipset create -exist $IPSET_NAME hash:ip family inet timeout 0
+
+[Install]
+WantedBy=ufw.service
+EOF
+    chmod 644 "$svc"
+
+    systemctl daemon-reload
+    systemctl enable observability-egress-ipset.service
+    log_info "Installed observability-egress-ipset.service (before ufw at boot)"
+}
+
 # ── main ────────────────────────────────────────────────────────────────────
 
 main() {
@@ -317,6 +351,7 @@ main() {
     ensure_packages
     create_ipset
     populate_ipset
+    install_boot_ipset_unit
     apply_ufw_rule
     install_refresh_unit
 

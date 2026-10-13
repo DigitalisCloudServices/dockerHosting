@@ -1182,6 +1182,10 @@ ufw is the host's egress firewall; ufw has no native FQDN support. Approach:
   and adds the IPs to the set.
 - A ufw `before.rules` line `-m set --match-set obs_egress_ips dst --dport 443
   -j ACCEPT` allows outbound HTTPS to those IPs only.
+- `observability-egress-ipset.service` creates the (empty) set at boot, ordered
+  `Before=ufw.service`. Without it ufw rejects the whole of `before.rules` on
+  boot — the referenced set does not exist yet — and the host drops every reply
+  packet, SSH included.
 - A systemd timer `observability-egress-refresh.timer` re-resolves the FQDNs on
   boot and daily (+ jitter) to track provider IP rotations.
 
