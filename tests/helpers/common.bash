@@ -40,6 +40,36 @@ create_call_log_mock() {
     chmod +x "$MOCK_BIN/$name"
 }
 
+# hide_command NAME [SCRIPT] — make NAME unresolvable, even where the host has a
+# real binary: GitHub's Ubuntu runners ship /usr/sbin/ufw, so deleting a mock is
+# not enough. PATH becomes MOCK_BIN followed by a symlink mirror of every other
+# PATH directory with NAME left out; mocks created later in MOCK_BIN still win.
+# Scripts that append the system directories to PATH themselves would find the
+# real binary again, so that line is removed from SCRIPT (a patched test copy).
+hide_command() {
+    local name="$1" script="${2:-}" dir mirror i=0 new_path="$MOCK_BIN"
+    local IFS=:
+    for dir in $PATH; do
+        [[ -d "$dir" && "$dir" != "$MOCK_BIN" ]] || continue
+        mirror="$BATS_TEST_TMPDIR/hide_${name}_path/$((i++))"
+        mkdir -p "$mirror"
+        ln -s "$dir"/* "$mirror"/ 2>/dev/null || true
+        rm -f "$mirror/$name"
+        new_path+=":$mirror"
+    done
+    export PATH="$new_path"
+    if [[ -n "$script" ]]; then
+        sed -i.orig '/^export PATH=/d' "$script"
+    fi
+}
+
+# file_mode FILE — octal permission bits, e.g. 600. GNU stat goes first: GNU
+# reads `stat -f` as --file-system and prints filesystem details instead of
+# failing, so the BSD form may only run where `stat -c` is rejected (macOS).
+file_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
 # ── path helpers ──────────────────────────────────────────────────────────────
 
 # Sets up a minimal Traefik directory tree under BATS_TEST_TMPDIR

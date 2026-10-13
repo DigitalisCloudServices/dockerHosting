@@ -4,12 +4,20 @@
 # Tests hook dispatch logic and the --always-run-hooks flag without real GCS or Docker.
 # Uses --skip-artifact-download so no network calls are made.
 
-REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+load 'helpers/common'
+
 UPDATE_SITE="${REPO_ROOT}/lib/update-site.sh"
 
 # ── Fixture helpers ────────────────────────────────────────────────────────────
 
 setup() {
+    # A bootstrap run on a stack that is not fully up takes the recovery path
+    # (docker login, compose pull and up) before its post-start hooks. Stub
+    # docker so that path runs here: a real docker on the host (CI runners
+    # have one) fails with no compose file and the hooks never fire.
+    setup_mocks
+    create_mock docker
+
     PROJ="$BATS_TEST_TMPDIR/site"
     mkdir -p "${PROJ}/infra/secrets" "${PROJ}/artifact-cache"
 

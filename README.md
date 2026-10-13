@@ -1339,6 +1339,7 @@ make test-lib          # lib/ script tests
 | `tests/traefik/test_install_traefik.bats` | 53 tests: nginx detection, migration, config writing, Cloudflare trustedIPs rendering, deploy-drift reinstall |
 | `tests/lib/test_decrypt.bats` | Artifact decryption and signature verification |
 | `tests/lib/test_gcs.bats` | GCS OAuth2 and download helpers |
+| `tests/test_compose_overlays.bats` | `lib/update-site.sh` compose overlay selection (run by `make test-lib` with `tests/lib/`) |
 | `tests/test_lifecycle_hooks.bats` | Lifecycle hook parsing and execution |
 | `tests/test_pam_policy.bats` | PAM password policy configuration |
 | `tests/test_yaml.bats` | YAML syntax validation for templates |

@@ -174,10 +174,7 @@ teardown() {
 
 @test "install-observability: newrelic env file is mode 600" {
     bash "$SCRIPT" --provider=newrelic --observability-key="$VALID_NR_KEY"
-    local mode
-    mode=$(stat -f '%Lp' "$OBS_ETC_DIR/newrelic.env" 2>/dev/null \
-        || stat -c '%a' "$OBS_ETC_DIR/newrelic.env" 2>/dev/null)
-    [ "$mode" = "600" ]
+    [ "$(file_mode "$OBS_ETC_DIR/newrelic.env")" = "600" ]
 }
 
 @test "install-observability: newrelic install copies compose template" {
