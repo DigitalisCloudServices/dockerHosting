@@ -639,7 +639,12 @@ fi
 
 # ── Extract infra artifact if stale ──────────────────────────────────────────
 
-if [[ "${INFRA_STALE}" == "true" ]]; then
+# A development-mode deploy pins no infra artifact (infra is symlinked from the
+# source tree), so --skip-artifact-download --force has nothing to extract.
+# INFRA_STALE stays true so the force-recreate below still runs.
+if [[ "${INFRA_STALE}" == "true" && -z "${CHANNEL_INFRA_ARTIFACT}" ]]; then
+    _log "No infra artifact pinned (development mode) — skipping extraction"
+elif [[ "${INFRA_STALE}" == "true" ]]; then
     _log "Extracting infra artifact to ${PROJECT_DIR}..."
     tar -xzf "${ARTIFACT_CACHE}/${CHANNEL_INFRA_ARTIFACT}" -C "${PROJECT_DIR}"
     _dotenv_set INFRA_HASH "${CHANNEL_INFRA_HASH}"

@@ -172,3 +172,10 @@ _write_hook_script() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"Dry-run"* ]]
 }
+
+@test "update-site: --force with no infra artifact pinned (development mode) skips extraction" {
+    sed -i.bak '/^INFRA_ARTIFACT=/d' "${PROJ}/.env"
+    run bash "$UPDATE_SITE" "$PROJ" --skip-artifact-download --force --pull-only
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipping extraction"* ]]
+}
