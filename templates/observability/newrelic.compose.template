@@ -68,6 +68,13 @@ services:
       NRIA_METRICS_NETWORK_SAMPLE_RATE: 60
       NRIA_METRICS_STORAGE_SAMPLE_RATE: 60
       NRIA_METRICS_SYSTEM_SAMPLE_RATE: 30
+      # Process sampler off (-1). With pid: host under the docker-default
+      # AppArmor profile, every 20s pass is denied ptrace-read on each host
+      # process and auditd logs it: ~65k AVC events/hour, rotating the audit
+      # logs in ~10h (seen on a Pi running the same pattern, 2026-10-28).
+      # NRIA_ENABLE_PROCESS_METRICS=false would only stop sending; the agent
+      # keeps sampling unless the rate is -1.
+      NRIA_METRICS_PROCESS_SAMPLE_RATE: -1
       # ContainerSample (~13 GB/month, the largest single line item) is not
       # tunable through NRIA_* variables: nri-docker's interval lives in
       # /etc/newrelic-infra/integrations.d/docker-config.yml, which the
