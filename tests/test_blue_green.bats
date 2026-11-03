@@ -116,10 +116,11 @@ _docker_calls() { grep -E '^docker compose .* (up|ps --services) ' "$CALLS" | se
     _enable_bg
     _update --skip-artifact-download --force
     [ "$status" -eq 0 ]
-    [ "$(_docker_calls | grep ' up ')" = "docker compose up -d --force-recreate --no-deps kong worker-ingest" ]
-    # the switch-over comes after the recreate and before the post-start hook
+    # kong has no artifact: plain up; the artifact service is recreated; the
+    # switch-over comes after both and before the post-start hook
     [ "$(grep -E '^(bg|hook)|compose .* up ' "$CALLS" | sed 's/docker compose.* up /up /')" = "$(printf '%s\n' \
-        'up -d --force-recreate --no-deps kong worker-ingest' \
+        'up -d --no-deps kong' \
+        'up -d --force-recreate --no-deps worker-ingest' \
         'bg deploy --auto --services api web --force' \
         'hook post-start')" ]
 }
@@ -149,7 +150,8 @@ _docker_calls() { grep -E '^docker compose .* (up|ps --services) ' "$CALLS" | se
     [ "$status" -eq 0 ]
     [ "$(_docker_calls | grep ' up ')" = "$(printf '%s\n' \
         'docker compose up -d api' \
-        'docker compose up -d --force-recreate --no-deps kong worker-ingest')" ]
+        'docker compose up -d --no-deps kong' \
+        'docker compose up -d --force-recreate --no-deps worker-ingest')" ]
     grep -qxF 'bg deploy --auto --services web --force' "$CALLS"
 }
 
@@ -172,6 +174,115 @@ _docker_calls() { grep -E '^docker compose .* (up|ps --services) ' "$CALLS" | se
     _update --skip-artifact-download
     [ "$status" -eq 0 ]
     _never_logged ' up |^bg '
+}
+
+# ── enabled: infra update recreates only artifact services and changed configs ─
+
+# A fuller stack: kong, redis, proxysql and mariadb-primary are stateful or
+# ingress services; worker-ingest and admin load artifacts; api and web are
+# labelled.  kong mounts kong.yml and a directory; redis and proxysql share one
+# config file; api mounts a file of its own.
+_infra_fixture() {
+    mkdir -p "${PROJ}/certs"
+    echo old > "${PROJ}/kong.yml"; echo old > "${PROJ}/shared.conf"; echo old > "${PROJ}/api.conf"
+    echo old > "${PROJ}/certs/ca.pem"
+    local b='{"type": "bind", "source": "'"${PROJ}"'/'
+    cat > "$COMPOSE_JSON" <<JSON
+{"services": {
+  "vault": {},
+  "kong": {"volumes": [${b}kong.yml"}, ${b}certs"}]},
+  "redis": {"volumes": [${b}shared.conf"}]},
+  "proxysql": {"volumes": [${b}shared.conf"}, {"type": "volume", "source": "data"}]},
+  "mariadb-primary": {"volumes": [${b}certs"}]},
+  "api": {"labels": {"artifact": "api", "com.velaair.bluegreen": "true"}, "volumes": [${b}api.conf"}]},
+  "web": {"labels": ["artifact=web", "com.velaair.bluegreen=true"]},
+  "worker-ingest": {"labels": {"artifact": "worker"}},
+  "admin": {"labels": {"artifact": "admin"}}
+}}
+JSON
+    printf 'vault\nkong\nredis\nproxysql\nmariadb-primary\napi\nweb\nworker-ingest\nadmin\n' > "$SERVICES"
+    cp "$SERVICES" "$RUNNING"
+}
+
+# Pin an infra artifact whose extraction rewrites the given files (and a file in
+# the certs directory).  Linux only: _dotenv_set uses GNU sed -i.
+_infra_artifact_changing() {
+    sed --version > /dev/null 2>&1 || skip "needs GNU sed (_dotenv_set uses sed -i)"
+    local f="$BATS_TEST_TMPDIR/infra" x
+    mkdir -p "$f/certs"
+    for x in "$@"; do echo new > "$f/$x"; done
+    echo new > "$f/certs/ca.pem"
+    tar -czf "${PROJ}/artifact-cache/infra.tar.gz" -C "$f" .
+    echo 'INFRA_ARTIFACT=./artifact-cache/infra.tar.gz' >> "${PROJ}/.env"
+}
+
+@test "bluegreen on: infra update force-recreates only artifact services; kong, redis, proxysql, mariadb get a plain up" {
+    _install_bg_script
+    _enable_bg
+    _infra_fixture
+    _update --skip-artifact-download --force
+    [ "$status" -eq 0 ]
+    [ "$(_docker_calls | grep ' up ')" = "$(printf '%s\n' \
+        'docker compose up -d --no-deps kong redis proxysql mariadb-primary' \
+        'docker compose up -d --force-recreate --no-deps worker-ingest admin')" ]
+    grep -qxF 'bg deploy --auto --services api web --force' "$CALLS"
+    [[ "$output" != *"IN-PLACE RECREATE"* ]]
+}
+
+@test "bluegreen on: a changed bind-mounted file recreates its service and says so" {
+    _install_bg_script
+    _enable_bg
+    _infra_fixture
+    _infra_artifact_changing kong.yml
+    _update --skip-artifact-download --force
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IN-PLACE RECREATE kong (bind-mounted config changed: ${PROJ}/kong.yml)"* ]]
+    [ "$(_docker_calls | grep ' up ')" = "$(printf '%s\n' \
+        'docker compose up -d --no-deps redis proxysql mariadb-primary' \
+        'docker compose up -d --force-recreate --no-deps kong worker-ingest admin')" ]
+}
+
+@test "bluegreen on: a file changed under two services recreates both; directories and labelled services' files are ignored" {
+    _install_bg_script
+    _enable_bg
+    _infra_fixture
+    _infra_artifact_changing shared.conf api.conf
+    _update --skip-artifact-download --force
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"IN-PLACE RECREATE redis (bind-mounted config changed: ${PROJ}/shared.conf)"* ]]
+    [[ "$output" == *"IN-PLACE RECREATE proxysql (bind-mounted config changed: ${PROJ}/shared.conf)"* ]]
+    [[ "$output" != *"IN-PLACE RECREATE kong"* && "$output" != *"IN-PLACE RECREATE mariadb"* && "$output" != *"IN-PLACE RECREATE api"* ]]
+    [ "$(_docker_calls | grep ' up ')" = "$(printf '%s\n' \
+        'docker compose up -d --no-deps kong mariadb-primary' \
+        'docker compose up -d --force-recreate --no-deps redis proxysql worker-ingest admin')" ]
+}
+
+@test "bluegreen on: script arriving with this infra has no baseline, so config files are not restarted and it warns" {
+    _enable_bg
+    _infra_fixture
+    _infra_artifact_changing kong.yml
+    mkdir -p "${BATS_TEST_TMPDIR}/infra/infra/scripts"
+    printf '#!/bin/bash\necho "bg $*" >> "%s"\n' "$CALLS" > "${BATS_TEST_TMPDIR}/infra/infra/scripts/deploy-blue-green.sh"
+    tar -czf "${PROJ}/artifact-cache/infra.tar.gz" -C "${BATS_TEST_TMPDIR}/infra" .
+    _update --skip-artifact-download --force
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No pre-extraction fingerprints"* ]]
+    [[ "$output" != *"IN-PLACE RECREATE"* ]]
+    [ "$(_docker_calls | grep ' up ')" = "$(printf '%s\n' \
+        'docker compose up -d --no-deps kong redis proxysql mariadb-primary' \
+        'docker compose up -d --force-recreate --no-deps worker-ingest admin')" ]
+}
+
+@test "bluegreen on: a file whose content is rewritten unchanged is not a change" {
+    _install_bg_script
+    _enable_bg
+    _infra_fixture
+    _infra_artifact_changing
+    echo old > "${BATS_TEST_TMPDIR}/infra/kong.yml"
+    tar -czf "${PROJ}/artifact-cache/infra.tar.gz" -C "${BATS_TEST_TMPDIR}/infra" .
+    _update --skip-artifact-download --force
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"IN-PLACE RECREATE"* ]]
 }
 
 # ── --dry-run and --pull-only ─────────────────────────────────────────────────

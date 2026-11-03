@@ -403,6 +403,10 @@ fi
 
 # ── Download stale artifacts ──────────────────────────────────────────────────
 
+# Blue/green (no-op unless enabled): fingerprint the bind-mounted config files
+# before anything is extracted, to find out which services need a restart for it.
+_bluegreen_fingerprint_save
+
 mkdir -p "${ARTIFACT_CACHE}"
 
 _download_artifact() {
@@ -782,7 +786,10 @@ _dc_up_with_recover() {
 # recreate below and switched over after the mariadb-sync check.
 _bluegreen_prepare
 
-if [[ "${INFRA_STALE}" == "true" ]]; then
+if [[ "${INFRA_STALE}" == "true" && -n "${BG_SERVICES}" ]]; then
+    # Blue/green: only artifact services are force-recreated (see lib/update-site-bluegreen.sh).
+    _bluegreen_infra_up
+elif [[ "${INFRA_STALE}" == "true" ]]; then
     # Bug #7 (2026-06-28): previously this branch passed --force-recreate
     # with no service list, which recreated EVERY container — including
     # vault — on every infra-hash change. Recreating vault routinely turned
@@ -802,11 +809,9 @@ if [[ "${INFRA_STALE}" == "true" ]]; then
         --env-file "${DOTENV}" config --services 2> /dev/null |
         grep -vE '^(vault)$' | tr '\n' ' ')"
     if [[ -n "${_all_services}" ]]; then
-        _log "Infra updated — force-recreating all services except vault${BG_SERVICES:+ and the blue/green ones}"
+        _log "Infra updated — force-recreating all services except vault"
         # shellcheck disable=SC2086
-        _all_services="$(_without_bluegreen ${_all_services})"
-        # shellcheck disable=SC2086
-        [[ -z "${_all_services}" ]] || _dc_up_with_recover -d --force-recreate ${BG_NO_DEPS} ${_all_services}
+        _dc_up_with_recover -d --force-recreate ${_all_services}
     else
         _warn "Could not enumerate compose services — falling back to default up -d"
         _dc_up_with_recover -d

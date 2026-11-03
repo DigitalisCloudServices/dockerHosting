@@ -655,7 +655,12 @@ With `BLUE_GREEN_ENABLED=true` in the site's `.env` **and** the site shipping
 `com.velaair.bluegreen: "true"` are never force-recreated in place — not on an infra update, not
 on a stale artifact, not with `--force`, not in bootstrap recovery (which brings up the other
 services with `up -d --no-deps`; a labelled service that is not running is started first, since
-there is nothing to switch from). Once the other services are up and the `mariadb-sync` check has
+there is nothing to switch from). On an infra update the other services are not all force-recreated either, since that would take
+down kong, mariadb and redis on nearly every release: only services with an `artifact:` label are
+force-recreated, plus any service that bind-mounts a regular file whose content changed in the new
+infra artifact (logged as `IN-PLACE RECREATE <service> (bind-mounted config changed: <files>)`);
+every other service except vault gets a plain `up -d --no-deps`, which recreates it only when
+compose sees its own config change. Directory mounts are not fingerprinted. Once the other services are up and the `mariadb-sync` check has
 passed, and before the post-start hooks, the updater runs
 
 ```
