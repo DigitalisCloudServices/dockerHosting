@@ -25,6 +25,11 @@
 #   --skip-artifact-download      Use cached artifacts; skip GCS (combine with --force to restart)
 #   --force                       Force-recreate all containers even if up to date
 #   --dry-run                     Report staleness but make no changes
+#
+# Blue/green (VelaAir F2040, opt-in): with BLUE_GREEN_ENABLED=true in .env and
+# infra/scripts/deploy-blue-green.sh present, services labelled
+# com.velaair.bluegreen=true are never recreated in place; the script switches
+# them over after the other services are up.  See lib/update-site-bluegreen.sh.
 
 set -euo pipefail
 
@@ -33,6 +38,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── GCS helpers ───────────────────────────────────────────────────────────────
 # shellcheck source=gcs.sh
 source "${SCRIPT_DIR}/gcs.sh"
+# shellcheck source=update-site-bluegreen.sh
+source "${SCRIPT_DIR}/update-site-bluegreen.sh"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
@@ -85,6 +92,8 @@ ARTIFACT_CACHE="${PROJECT_DIR}/artifact-cache"
 DECRYPT_SH="${SCRIPT_DIR}/decrypt.sh"
 DOTENV="${PROJECT_DIR}/.env"
 GCS_KEY_FILE="${PROJECT_DIR}/secrets/gcs_service_account.json"
+# shellcheck disable=SC2034 # used by lib/update-site-bluegreen.sh
+BLUEGREEN_SH="${PROJECT_DIR}/infra/scripts/deploy-blue-green.sh"
 
 # Export COMPOSE_DIR so lifecycle hooks resolve relative paths against the
 # deploy directory rather than their own (possibly symlinked) script location.
@@ -388,6 +397,7 @@ if [[ "${DRY_RUN}" == "true" ]]; then
         [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]] && _stale_names+=("${ARTIFACT_NAMES[$_i]}")
     done
     _log "Dry-run: would update: ${_stale_names[*]}"
+    _bluegreen_dry_run
     exit 0
 fi
 
@@ -708,24 +718,6 @@ fi
 _log "Pulling container images..."
 docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" pull --quiet --ignore-pull-failures
 
-# Return all service names whose `artifact` label matches the given artifact name.
-# Requires Docker Compose v2.15+ for --format json.
-_services_for_artifact() {
-    local artifact_name="$1"
-    docker compose --project-directory "${PROJECT_DIR}" --env-file "${DOTENV}" config --format json 2> /dev/null |
-        python3 -c "
-import json, sys
-config = json.load(sys.stdin)
-name = sys.argv[1]
-for svc, cfg in config.get('services', {}).items():
-    labels = cfg.get('labels', {})
-    if isinstance(labels, list):
-        labels = dict(l.split('=', 1) for l in labels if '=' in l)
-    if labels.get('artifact') == name:
-        print(svc)
-" "${artifact_name}" 2> /dev/null || true
-}
-
 # F474: wrap `docker compose up` invocations in a detect+recover loop.
 # Docker rejects a network with "Pool overlaps with other one on this address
 # space" when the requested /24 collides with an existing pool. Before F474
@@ -786,6 +778,10 @@ _dc_up_with_recover() {
     done
 }
 
+# Blue/green (no-op unless enabled): labelled services are left out of every
+# recreate below and switched over after the mariadb-sync check.
+_bluegreen_prepare
+
 if [[ "${INFRA_STALE}" == "true" ]]; then
     # Bug #7 (2026-06-28): previously this branch passed --force-recreate
     # with no service list, which recreated EVERY container — including
@@ -806,29 +802,37 @@ if [[ "${INFRA_STALE}" == "true" ]]; then
         --env-file "${DOTENV}" config --services 2> /dev/null |
         grep -vE '^(vault)$' | tr '\n' ' ')"
     if [[ -n "${_all_services}" ]]; then
-        _log "Infra updated — force-recreating all services except vault"
+        _log "Infra updated — force-recreating all services except vault${BG_SERVICES:+ and the blue/green ones}"
         # shellcheck disable=SC2086
-        _dc_up_with_recover -d --force-recreate ${_all_services}
+        _all_services="$(_without_bluegreen ${_all_services})"
+        # shellcheck disable=SC2086
+        [[ -z "${_all_services}" ]] || _dc_up_with_recover -d --force-recreate ${BG_NO_DEPS} ${_all_services}
     else
         _warn "Could not enumerate compose services — falling back to default up -d"
         _dc_up_with_recover -d
     fi
 elif [[ "${_force_full_up}" == "true" ]]; then
     _log "Bootstrap recovery — bringing up all services"
-    _dc_up_with_recover -d
+    if [[ -n "${BG_SERVICES}" ]]; then
+        _bluegreen_up_others
+    else
+        _dc_up_with_recover -d
+    fi
 else
     STALE_SERVICES=()
     for _i in "${!ARTIFACT_NAMES[@]}"; do
         if [[ "${ARTIFACT_STALE[$_i]:-false}" == "true" ]]; then
             while IFS= read -r _svc; do
-                [[ -n "${_svc}" ]] && STALE_SERVICES+=("${_svc}")
+                [[ -n "${_svc}" ]] || continue
+                _is_bluegreen_service "${_svc}" || STALE_SERVICES+=("${_svc}")
             done < <(_services_for_artifact "${ARTIFACT_NAMES[$_i]}")
         fi
     done
     if [[ ${#STALE_SERVICES[@]} -gt 0 ]]; then
         _log "Restarting stale services: ${STALE_SERVICES[*]}"
-        _dc_up_with_recover -d --force-recreate "${STALE_SERVICES[@]}"
-    else
+        # shellcheck disable=SC2086
+        _dc_up_with_recover -d --force-recreate ${BG_NO_DEPS} "${STALE_SERVICES[@]}"
+    elif [[ -z "${BG_SWITCH}" ]]; then
         _warn "No labeled services found for stale artifacts — check 'artifact:' labels in docker-compose.yml"
     fi
 fi
@@ -875,6 +879,9 @@ _assert_mariadb_sync_succeeded() {
     _log "F727 mariadb-sync ok (exit 0)"
 }
 _assert_mariadb_sync_succeeded
+
+# Blue/green: switch the labelled services over now that their dependencies are up.
+_bluegreen_switch
 
 # Run post-start lifecycle hooks
 _run_hooks "post-start"
