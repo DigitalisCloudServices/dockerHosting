@@ -172,7 +172,8 @@ dockerHosting/
 ├── lib/                              # Shared runtime libraries (deployed to server)
 │   ├── decrypt.sh                    # Artifact verification + decryption (AES-256-GCM/CBC)
 │   ├── gcs.sh                        # GCS OAuth2 helpers (_gcs_access_token, _gcs_https_url)
-│   └── update-site.sh                # Generic artifact updater — runs on every timer cycle
+│   ├── update-site.sh                # Generic artifact updater — runs on every timer cycle
+│   └── update-site-bluegreen.sh      # Opt-in blue/green mode for update-site.sh (sourced)
 ├── docs/
 │   └── compliance.md                 # Security posture: ISO 27001 / CIS / NIST mapping
 ├── scripts/                          # Modular setup scripts
@@ -646,6 +647,34 @@ Options:
   --force                       Force-recreate all containers even if up to date
   --dry-run                     Check staleness and report but make no changes
 ```
+
+#### Blue/green mode (opt-in)
+
+With `BLUE_GREEN_ENABLED=true` in the site's `.env` **and** the site shipping
+`infra/scripts/deploy-blue-green.sh`, services whose merged compose config carries the label
+`com.velaair.bluegreen: "true"` are never force-recreated in place — not on an infra update, not
+on a stale artifact, not with `--force`, not in bootstrap recovery (which brings up the other
+services with `up -d --no-deps`; a labelled service that is not running is started first, since
+there is nothing to switch from). On an infra update the other services are not all force-recreated either, since that would take
+down kong, mariadb and redis on nearly every release: only services with an `artifact:` label are
+force-recreated, plus any service that bind-mounts a regular file whose content changed in the new
+infra artifact (logged as `IN-PLACE RECREATE <service> (bind-mounted config changed: <files>)`);
+every other service except vault gets a plain `up -d --no-deps`, which recreates it only when
+compose sees its own config change. Directory mounts are not fingerprinted. Once the other services are up and the `mariadb-sync` check has
+passed, and before the post-start hooks, the updater runs
+
+```
+bash infra/scripts/deploy-blue-green.sh deploy --auto --services "<services>" [--force]
+```
+
+for the labelled services that need it: all of them when infra is stale or `--force` is given,
+otherwise those whose `artifact:` label names a stale artifact. A non-zero exit fails the update
+and says so; the script removes the old container only after the new one is healthy, so the live
+containers keep serving. The new artifact hash is already recorded in `.env`, so the next timer
+tick does not retry — run the site's deploy command by hand. `--dry-run` lists the services that
+would be switched; `--pull-only` is unchanged. With the variable unset or false, or the script
+absent, nothing above applies and the updater behaves exactly as before. Code:
+`lib/update-site-bluegreen.sh`; tests: `tests/test_blue_green.bats`.
 
 Trigger an immediate update:
 
@@ -1369,6 +1398,7 @@ make test-migrate-fstab # fstab UUID migration tests
 | `tests/lib/test_decrypt.bats` | Artifact decryption and signature verification |
 | `tests/lib/test_gcs.bats` | GCS OAuth2 and download helpers |
 | `tests/test_compose_overlays.bats` | `lib/update-site.sh` compose overlay selection (run by `make test-lib` with `tests/lib/`) |
+| `tests/test_blue_green.bats` | `lib/update-site.sh` blue/green mode: labelled services never recreated in place, switch-over call, dry-run, failure (run by `make test-lib`) |
 | `tests/test_lifecycle_hooks.bats` | Lifecycle hook parsing and execution |
 | `tests/test_migrate_fstab_to_uuid.bats` | fstab UUID migration: safety checks, swapped-disk boot, layout kept, backup, `findmnt --verify`, dry run (`make test-migrate-fstab`) |
 | `tests/test_pam_policy.bats` | PAM password policy configuration |

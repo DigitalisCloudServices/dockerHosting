@@ -126,11 +126,11 @@ test-traefik: check-deps
 	@echo "Running Traefik script tests..."
 	@bats --recursive tests/traefik/
 
-# lib/decrypt.sh, lib/gcs.sh and the lib/update-site.sh compose overlays
-# (update-site.sh's hook tests are test-hooks).
+# lib/decrypt.sh, lib/gcs.sh, the lib/update-site.sh compose overlays and its
+# blue/green mode (update-site.sh's hook tests are test-hooks).
 test-lib: check-deps
 	@echo "Running lib/ script tests..."
-	@bats --recursive tests/lib/ tests/test_compose_overlays.bats
+	@bats --recursive tests/lib/ tests/test_compose_overlays.bats tests/test_blue_green.bats
 
 test-syntax: check-deps
 	@echo "Running syntax checks..."
